@@ -16,15 +16,14 @@ namespace QuestBridge
             if (original)
             {
                 var picture = Rect(brand, "Original Bastamat logo", 0, 0, 1, 1);
-                var graphic = picture.gameObject.AddComponent<UnityEngine.UI.RawImage>();
+                var graphic = picture.gameObject.AddComponent<QuestBridgeLogoGraphic>();
                 graphic.texture = original;
                 graphic.color = Color.white;
                 graphic.raycastTarget = false;
+                // These are the original PNG dimensions, independent of a cached
+                // Unity import that may previously have resized it to a square.
+                graphic.sourceAspect = 1536f / 1024f;
                 graphic.uvRect = bastamatLogoUV;
-                var fit = picture.gameObject.AddComponent<UnityEngine.UI.AspectRatioFitter>();
-                fit.aspectMode = UnityEngine.UI.AspectRatioFitter.AspectMode.FitInParent;
-                fit.aspectRatio = original.width * Mathf.Max(.001f, bastamatLogoUV.width)
-                    / (original.height * Mathf.Max(.001f, bastamatLogoUV.height));
                 return brand;
             }
 

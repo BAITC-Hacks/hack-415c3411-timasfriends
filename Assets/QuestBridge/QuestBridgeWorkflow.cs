@@ -17,7 +17,8 @@ namespace QuestBridge
         readonly HashSet<string> manualDraftFields=new();
         RectTransform roleOverlay, teamNavigation, editorScoreContent;
         UnityEngine.UI.Button roleButton, mineButton, readinessButton, editDraftButton, confirmDraftButton, publishButton, retryPreviewButton;
-        TMP_Text teamNavigationName, teamNavigationStats, editorScore, editorBreakdown, editorStatus;
+        TMP_Text teamNavigationName, teamNavigationStats, editorScore, editorBreakdown, editorStatus, editorScoreTable, editorReviewNote;
+        UnityEngine.UI.ScrollRect editorReviewScroll;
         DraftData currentDraft=new DraftData(), editingDraft;
         TaskRecord editingTask, currentDraftTask;
         int readinessFilter, editorGeneration, editorRevision, previewRevision=-1, reviewedRevision=-1;
@@ -213,9 +214,13 @@ namespace QuestBridge
             editorScore=Text(scorePanel,"… / 100",.07f,.765f,.86f,.12f,35,true,Accent);
             InitializeScoreFeedback(scorePanel,existing);
             var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.155f,.86f,.515f,out var scoreScroll);editorScoreContent=scoreBody;
+            editorReviewScroll=scoreScroll;
             editorBreakdown=Text(scoreBody,"Запрашиваем расчёт…",0,0,1,1,16,false,Muted);editorBreakdown.alignment=TextAlignmentOptions.TopLeft;editorBreakdown.overflowMode=TextOverflowModes.Overflow;
             scoreBody.sizeDelta=new Vector2(0,520);
-            Text(scorePanel,"ИИ-ясность — после публикации",.07f,.092f,.86f,.05f,14,false,Muted);
+            editorScoreTable=Text(scorePanel,"",.07f,.17f,.86f,.50f,16,false,Muted);
+            editorScoreTable.alignment=TextAlignmentOptions.TopLeft;editorScoreTable.textWrappingMode=TextWrappingModes.NoWrap;editorScoreTable.lineSpacing=6;
+            editorScoreTable.gameObject.SetActive(false);
+            editorReviewNote=Text(scorePanel,"ИИ-ясность — после публикации",.07f,.092f,.86f,.05f,13,false,Muted);
             retryPreviewButton=Button(scorePanel,"Повторить проверку",.07f,.015f,.86f,.065f,()=>{DraftChanged();previewAt=Time.unscaledTime;},Blue);
             retryPreviewButton.GetComponentInChildren<TMP_Text>().fontSize=14;
             confirmDraftButton=Button(pane,"Подтвердить сведения",.04f,.07f,.43f,.054f,ConfirmDraftWithFeedback,Blue);
@@ -235,15 +240,21 @@ namespace QuestBridge
             UpdatePublishButton();
         }
         bool ApprovedPreview()=>reviewedRevision==editorRevision&&editorValidation?.status=="passed"&&!previewRunning;
-        void SetEditorBreakdown(string value)
+        void SetEditorBreakdown(string value,bool compact=false)
         {
-            if(!editorBreakdown)return;editorBreakdown.text=value;
+            if(!editorBreakdown)return;
+            if(editorScoreTable)editorScoreTable.gameObject.SetActive(compact);
+            if(editorReviewScroll)editorReviewScroll.gameObject.SetActive(!compact);
+            if(compact){editorScoreTable.text=value;return;}
+            if(editorReviewNote)editorReviewNote.text="ИИ-ясность — после публикации";
+            editorBreakdown.text=value;
             if(editorScoreContent)editorScoreContent.sizeDelta=new Vector2(0,Mathf.Max(360,editorBreakdown.GetPreferredValues(value,Mathf.Max(180,editorScoreContent.rect.width),Mathf.Infinity).y+24));
         }
         void ShowPreviewPending()
         {
             if(!editorScore)return;
             editorScore.text=ValidBaseUrl()?"Проверяем…":"Без оценки";
+            if(editorReviewNote)editorReviewNote.text="ИИ-ясность — после публикации";
             SetEditorBreakdown(ValidBaseUrl()?"Проверяем содержание полей. После проверки появится расчёт баллов.":"Для проверки содержания и расчёта баллов подключите сервер. Черновик сохраняется на этом устройстве.");
         }
         void ShowFieldIssues(ContentIssue[] issues)
@@ -288,9 +299,14 @@ namespace QuestBridge
                 ShowFieldIssues(editorValidation.issues);
                 bool scored=editorValidation.status=="passed"||editorValidation.status=="rejected";
                 editorScore.text=editorValidation.status=="passed"?confirmedDisplayScore+" / 100":editorValidation.status=="rejected"?"Нужны правки":"Без оценки";
-                var lines=new StringBuilder(editorValidation.status=="passed"?ReadinessName(score.readiness)+"\n\n":"");
+                var lines=new StringBuilder();
+                if(editorValidation.status=="passed")
+                {
+                    foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
+                    if(editorReviewNote)editorReviewNote.text=editorValidation.aiMode=="fallback"?"AI не подключён · локальная проверка":"AI проверил содержание";
+                    SetEditorBreakdown(lines.ToString().TrimEnd(),true);return;
+                }
                 if(!string.IsNullOrWhiteSpace(editorValidation.message))lines.Append(editorValidation.message).Append("\n\n");
-                if(editorValidation.status=="passed"&&editorValidation.aiMode=="fallback")lines.Append("AI не подключён. Выполнена локальная проверка.\n\n");
                 foreach(var issue in editorValidation.issues??Array.Empty<ContentIssue>())
                     if(issue!=null)lines.Append(ShortLabel(issue.field)).Append(": ").Append(issue.message).Append("\n\n");
                 if(!scored){lines.Append("Нажмите «Повторить проверку». Публикация доступна после проверки.");SetEditorBreakdown(lines.ToString());return;}
@@ -350,15 +366,15 @@ namespace QuestBridge
                 float height=Mathf.Max(45,label.GetPreferredValues(value,width,0).y+8);row.sizeDelta=new Vector2(0,height+45);label.rectTransform.offsetMax=new Vector2(0,-34);top+=height+57;
             }
             body.sizeDelta=new Vector2(0,top);
-            var rating=Surface(pane,"Published score",.68f,.42f,.28f,.39f,Paper);
-            Text(rating,task.readiness+" / 100",.08f,.76f,.84f,.16f,32,true,Accent);
-            var scoreContent=CreateScroll(rating,"Published breakdown",.08f,.07f,.84f,.65f,out var scoreScroll);
+            var rating=Surface(pane,"Published score",.68f,.38f,.28f,.43f,Paper);
+            Text(rating,task.readiness+" / 100",.08f,.80f,.84f,.14f,32,true,Accent);
             var scoreText=new StringBuilder();foreach(var row in task.scoreBreakdown??Array.Empty<ScoreRow>())scoreText.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
-            var scoreLabel=Text(scoreContent,scoreText.ToString(),0,0,1,1,16,false,Muted);scoreLabel.alignment=TextAlignmentOptions.TopLeft;scoreLabel.overflowMode=TextOverflowModes.Overflow;scoreContent.sizeDelta=new Vector2(0,360);
-            DrawAiRating(pane,task,.68f,.17f,.28f,.22f);
-            Button(pane,isBusiness?"Предложения команд · "+task.proposalCount:"Откликнуться · "+task.proposalCount,.68f,.065f,.28f,.08f,()=>ShowProposals(task),null,true);
+            var scoreLabel=Text(rating,scoreText.ToString().TrimEnd(),.08f,.065f,.84f,.69f,16,false,Muted);
+            scoreLabel.alignment=TextAlignmentOptions.TopLeft;scoreLabel.textWrappingMode=TextWrappingModes.NoWrap;scoreLabel.lineSpacing=6;
+            DrawAiRating(pane,task,.68f,.145f,.28f,.22f);
+            Button(pane,isBusiness?"Предложения команд · "+task.proposalCount:"Откликнуться · "+task.proposalCount,.68f,.055f,.28f,.075f,()=>ShowProposals(task),null,true);
             if(isBusiness&&task.businessId==businessId)Button(pane,"Редактировать",.04f,.054f,.28f,.064f,()=>OpenDraftEditor(task),Blue);
-            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;scoreScroll.verticalNormalizedPosition=1;
+            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;
         }
         IEnumerator ApiRequest<T>(string method,string path,object body,Action<T> onSuccess,Action<string> onError=null)
         {
