@@ -22,12 +22,12 @@ from .scoring import is_filled
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 FIELD_NAMES = tuple(Draft.model_fields)
 QUESTION_TEXT = {
-    "users": "Кто будет пользоваться результатом?",
-    "data": "Какие данные, примеры или материалы уже доступны?",
-    "successCriteria": "По какому проверяемому признаку вы поймёте, что задача решена?",
+    "users": "Кто будет пользоваться решением?",
+    "data": "Какие данные или примеры уже есть?",
+    "successCriteria": "Как вы поймёте, что задача решена?",
     "need": "Что именно нужно изменить или улучшить?",
     "expectedResult": "Какой конкретный результат должна передать команда?",
-    "constraints": "Какие ограничения нужно учесть? Если их пока нет, так и напишите.",
+    "constraints": "Какие сроки и ограничения нужно учесть?",
     "contact": "Как команда сможет связаться с представителем бизнеса?",
     "interactionFormat": "В каком формате вы готовы общаться с командой?",
     "feedbackProcess": "Кто и как будет проверять промежуточный результат?",
@@ -222,26 +222,31 @@ class FallbackProvider:
         missing = [field for field in FIELD_NAMES if not is_filled(getattr(draft, field))]
         first_turn = len(_user_messages(history)) <= 1
         if first_turn and missing:
-            anchor = draft.context[:100]
             fields = [field for field in QUESTION_TEXT if field in missing][:3]
             questions = [Question(id=f"q-{field}", field=field, text=QUESTION_TEXT[field]) for field in fields]
-            context = f"По описанию «{anchor}» нужно уточнить: " if anchor else "Нужно уточнить: "
-            message = ("Локальный режим. " + context + " ".join(q.text for q in questions)
-                       + " Можно ответить строками «пользователи: …», «данные: …», "
-                       "«критерии успеха: …» или написать «не знаю».")
+            context = draft.context.strip()
+            intro = (f"Уточним задачу «{context}»." if context and len(context) <= 72
+                     else "Уточним несколько деталей задачи.")
+            numbered = "\n".join(f"{index}. {question.text}"
+                                 for index, question in enumerate(questions, 1))
+            answer_format = "\n".join(f"{FIELD_LABELS[field].capitalize()}: …" for field in fields)
+            message = f"{intro}\n\n{numbered}\n\nОтветьте в таком формате:\n{answer_format}"
             return ChatResponse(conversationId=conversation_id, message=message,
                                 phase="clarifying", aiMode="fallback", questions=questions,
                                 draft=None, sources=sources, missingFields=missing)
-        gaps = ", ".join(FIELD_LABELS[field] for field in missing)
-        message = "Локальный режим. Черновик готов к редактированию; публикацию подтверждает человек."
-        if gaps:
-            message += f" Пока не заполнены: {gaps}. Заполните их в карточке или сообщением с названиями полей."
+        message = "Описание сохранено в черновике. Задача ещё не опубликована."
+        if missing:
+            next_field = next(field for field in QUESTION_TEXT if field in missing)
+            message += (f"\n\n{QUESTION_TEXT[next_field]}"
+                        f"\nМожно ответить: «{FIELD_LABELS[next_field].capitalize()}: …».")
+        else:
+            message += " Проверьте данные перед публикацией."
         return ChatResponse(conversationId=conversation_id, message=message,
                             phase="draft_ready", aiMode="fallback", questions=[],
                             draft=draft, sources=sources, missingFields=missing)
 
     def clarity(self) -> ClarityResult:
-        return ClarityResult(clarity=0, clarityReason="Оценка AI недоступна: локальный режим; 0 не является оценкой ясности модели.",
+        return ClarityResult(clarity=0, clarityReason="Оценка AI сейчас недоступна. 0 не является оценкой ясности задачи.",
                              aiMode="fallback")
 
 

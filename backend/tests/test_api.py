@@ -147,7 +147,7 @@ def test_health_and_exact_catalog_contract(client):
     proposals_count = 0
     for card in catalog["cards"]:
         assert set(card) == {
-            "id", "title", "description", "category", "readiness", "clarity", "teamIds"
+            "id", "title", "description", "category", "readiness", "clarity", "teamIds", "demo"
         }
         assert 0 <= card["readiness"] <= 100
         assert 0 <= card["clarity"] <= 10

@@ -218,6 +218,7 @@ class CatalogCard(APIModel):
     readiness: Readiness
     clarity: Clarity
     teamIds: list[Identifier] = Field(default_factory=list)
+    demo: StrictBool = False
 
 
 class CatalogResponse(APIModel):

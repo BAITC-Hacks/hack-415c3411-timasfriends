@@ -3,12 +3,14 @@
 Original specification: [BACKEND_AGENT_PROMPT.md](BACKEND_AGENT_PROMPT.md). The backend is implemented in [`backend/`](../backend/README.md); the Unity integration below remains limited to two endpoints.
 
 The first Unity slice currently calls only:
-- GET `{serverUrl}/api/catalog`: `{cards:[{id,title,description,category,readiness,clarity,teamIds:[]}],teams:[{id,name,initials,stack,description,completed}]}`.
+- GET `{serverUrl}/api/catalog`: `{cards:[{id,title,description,category,readiness,clarity,teamIds:[],demo:false}],teams:[{id,name,initials,stack,description,completed}]}`.
 - POST `{serverUrl}/api/chat`: `{conversationId,message}` -> `{conversationId,message}` (additional fields allowed).
 
 Empty `serverUrl` means offline demo. Set it before entering Play and restart Play when switching servers. Catalog polling is sequential, with requests scheduled approximately five seconds apart and no overlap on slow responses. Timeout retains the last snapshot. Both card and team ids must be unique and nonempty; teamIds must resolve to teams in the same snapshot. Readiness is 0–100; clarity is finite 0–10. The client validates before applying and sorts readiness descending, clarity descending, id ascending.
 
-Chat responses require nonempty `conversationId` and `message`. Optional `aiMode: "fallback"` changes the assistant status. Draft/phase/publication integration remains a later slice. Input is locked during a request; errors preserve the submitted text. Chat history is displayed for the current app session.
+Each catalog card carries `demo` from its published task; the optional field defaults to `false` for older payloads. Seed cards have `demo:true`. Their readiness is calculated from prefilled and confirmed synthetic fields: the SAT example has all ten weighted fields and therefore starts at 100. Readiness describes card completeness, not an AI assessment of a chat message; chat does not publish or score a task.
+
+Chat responses require nonempty `conversationId` and `message`. Optional `aiMode: "fallback"` changes the assistant status to **Без ИИ · пошаговый режим**. Optional `phase: "draft_ready"` shows **Черновик не опубликован**; editing and publication remain a later slice. Input and conversation reset are locked during a request; errors preserve the submitted text. Chat history is displayed for the current app session. **Сначала** resets the client conversation ID; the next message starts a new server conversation and the previous history stays in SQLite.
 
 API key belongs exclusively to server environment. Configure CORS for the WebGL host; serve API over HTTPS for an HTTPS-hosted client. Do not deploy a localhost URL for remote users.
 

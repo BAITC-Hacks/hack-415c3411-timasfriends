@@ -10,6 +10,8 @@ Open this repository as a Unity project. Open `Assets/QuestBridge/QuestBridge.un
 
 Try scrolling the central catalog, selecting a round team avatar, opening a task, filtering categories, toggling focus and sound, and sending a draft. **Демо** starts a clearly labelled stream of sample leader changes every five seconds; **Пауза** stops it. Cards animate position and score changes; unchanged server snapshots keep their buttons and scroll position. Sound starts quietly enabled and remembers your mute preference. Focus uses a soft white veil, not a GPU blur; it suppresses sound and dims team details. The UI targets desktop landscape; WebGL build and browser verification are pending.
 
+The screen uses a single header with a bridge mark, one connection status, and three aligned columns. **Сначала** starts a new conversation without deleting server history. Chat bubbles resize with the viewport; long incoming replies open at their beginning. Example cards carry **Пример** and show **полнота** as a percentage: the prefilled SAT example starts at 100 because its weighted fields are filled and confirmed. That value is unrelated to the user's chat. The fallback assistant uses short questions and the visible label **Без ИИ · пошаговый режим**; drafts are not published automatically.
+
 Exit focus with the large **Вернуться в каталог** button beneath the center message. Click the dimmed background to close a task detail window; clicks inside it do not close it. Click outside the team panel to dismiss its selection. Escape closes the top detail window, then focus, then the team selection.
 
 For sharp text in Game view, disable **Low Resolution Aspect Ratios**, use native scale **1x**, and expand the Game view. `AgentScripts/ShowPreview.cs` applies these Editor-only preview settings. The UI canvas uses pixel-perfect positioning and scales with screen height so labels retain their line height in wide windows. The generated font retains its 90-point SDF source sampling.
@@ -45,7 +47,7 @@ Implemented server formula: context 10, need 10, data 20, expected result 15, su
 
 ## Verification
 
-`AgentScripts/VerifyExperience.cs` runs through Unity Pipeline in Play mode. It checks stable buttons on repeated snapshots, retained scroll position, invalid response rejection, score ordering, avatar selection and loaded audio. Visual inspection is also performed in Game view. The backend API has been checked over local HTTP. Unity with the real backend and WebGL browser deployment have not yet been verified.
+`AgentScripts/VerifyExperience.cs` runs through Unity Pipeline in Play mode. It checks stable buttons on repeated snapshots, retained scroll position, invalid response rejection, score ordering, avatar selection and loaded audio. Visual inspection is also performed in Game view. The local backend has been connected to Unity: five server cards and teams loaded, and a chat request received a fallback reply. The current redesign compiles with no Console errors and has been visually reviewed in Game view. WebGL browser deployment and live AI calls have not yet been verified.
 
 ## Бизнес-задачи от Claude
 

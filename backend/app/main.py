@@ -215,7 +215,8 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             tasks.sort(key=lambda task: (-task.readiness, -task.clarity, task.id))
             teams = [team_response(conn, row["id"]) for row in conn.execute("SELECT id FROM teams ORDER BY id").fetchall()]
             cards = [CatalogCard(id=t.id, title=t.draft.title, description=t.draft.need or t.draft.context,
-                                 category=t.draft.category, readiness=t.readiness, clarity=t.clarity, teamIds=t.teamIds) for t in tasks]
+                                 category=t.draft.category, readiness=t.readiness, clarity=t.clarity, teamIds=t.teamIds,
+                                 demo=t.demo) for t in tasks]
             return CatalogResponse(version=version, cards=cards, teams=teams)
 
     @app.post("/api/chat", response_model=ChatResponse)
