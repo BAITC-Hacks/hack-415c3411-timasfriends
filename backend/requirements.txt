@@ -1,4 +1,7 @@
 fastapi==0.115.12
+# Starlette 0.46.x uses the BlockingPortal alias deprecated in AnyIO 4.15.
+# Revisit this compatibility pin when upgrading FastAPI/Starlette.
+anyio==4.14.2
 pydantic==2.11.7
 uvicorn==0.34.3
 httpx==0.28.1

@@ -5,6 +5,8 @@ import httpx
 import pytest
 
 from backend.app.ai import AIService, PROMPTS
+from backend.app.config import Settings
+from backend.app.main import create_app
 from backend.app.models import Draft, FieldSource
 
 
@@ -116,6 +118,7 @@ def test_provider_uses_responses_schema_and_data_boundary():
     assert result.aiMode == "live"
     sent = requests[0]
     assert sent["store"] is False
+    assert "reasoning" not in sent
     assert sent["text"]["format"]["type"] == "json_schema"
     assert sent["text"]["format"]["strict"] is True
     assert injection not in sent["instructions"]
@@ -189,6 +192,77 @@ def test_wall_clock_timeout_covers_entire_provider_call():
     result = run(asyncio.wait_for(service.chat("conv-1", history("SAT"), Draft(), []), timeout=1))
     assert result.aiMode == "fallback"
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, 10.0), (8.0, 8.0), (10.0, 10.0), (30.0, 10.0)])
+def test_chat_and_clarity_honor_timeout_with_ten_second_cap(monkeypatch, configured, expected):
+    deadlines, transport_timeouts = [], []
+    original_wait_for = asyncio.wait_for
+
+    async def observe_deadline(awaitable, timeout):
+        deadlines.append(timeout)
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    def handler(request):
+        transport_timeouts.append(request.extensions["timeout"])
+        task = json.loads(request.content)["text"]["format"]["name"]
+        return response(clarifying_output() if task == "questbridge_chat" else
+                        {"clarity": 7.5, "clarityReason": "Результат можно проверить."})
+
+    monkeypatch.setattr(asyncio, "wait_for", observe_deadline)
+    options = {} if configured is None else {"timeout": configured}
+    service = AIService("test-not-a-real-key", "test-model", transport=httpx.MockTransport(handler), **options)
+    assert run(service.chat("conv-1", history("Проверка SAT"), Draft(), [])).aiMode == "live"
+    assert run(service.clarity(Draft(context="Проверка SAT"))).aiMode == "live"
+    assert deadlines == [expected, expected]
+    assert len(transport_timeouts) == 2
+    assert all(set(timeout.values()) == {expected} for timeout in transport_timeouts)
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, 10.0), ("4", 4.0), ("10", 10.0), ("30", 10.0)])
+def test_environment_timeout_defaults_to_ten_and_preserves_limit(monkeypatch, configured, expected):
+    if configured is None:
+        monkeypatch.delenv("AI_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("AI_TIMEOUT_SECONDS", configured)
+    assert Settings().ai_timeout == 10.0
+    assert Settings.from_env().ai_timeout == expected
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, ""), ("", ""), (" none ", "none"), ("low", "low")])
+def test_reasoning_setting_propagates_from_environment_through_app_to_http(monkeypatch, tmp_path, configured, expected):
+    if configured is None:
+        monkeypatch.delenv("AI_REASONING_EFFORT", raising=False)
+    else:
+        monkeypatch.setenv("AI_REASONING_EFFORT", configured)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
+    monkeypatch.setenv("AI_MODEL", "test-model")
+    monkeypatch.setenv("QUESTBRIDGE_DB", str(tmp_path / "reasoning.sqlite3"))
+    settings = Settings.from_env()
+    assert settings.ai_reasoning_effort == expected
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        return response(clarifying_output() if body["text"]["format"]["name"] == "questbridge_chat"
+                        else {"clarity": 8.0, "clarityReason": "Результат можно проверить."})
+
+    original_client = httpx.AsyncClient
+
+    def client_with_transport(**kwargs):
+        return original_client(**{**kwargs, "transport": httpx.MockTransport(handler)})
+
+    monkeypatch.setattr(httpx, "AsyncClient", client_with_transport)
+    service = create_app(settings).state.ai
+    assert run(service.chat("conv-1", history("Проверка SAT"), Draft(), [])).aiMode == "live"
+    assert run(service.clarity(Draft(context="Проверка SAT"))).aiMode == "live"
+    assert len(requests) == 2
+    for request in requests:
+        if expected:
+            assert request["reasoning"] == {"effort": expected}
+        else:
+            assert "reasoning" not in request
 
 
 def test_auth_failure_does_not_retry_or_expose_key():

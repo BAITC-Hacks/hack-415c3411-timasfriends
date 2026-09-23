@@ -25,6 +25,8 @@ Recordings/
 !.env.example
 
 # Local Python backend state and environments
+/venv/
+/venc/
 backend/.venv/
 backend/data/
 __pycache__/

@@ -88,7 +88,7 @@ Scope API предназначены для демонстрации на син
 - Unity packages: `Packages/manifest.json`, `Packages/packages-lock.json`.
 - Noto Sans Regular — [источник](https://github.com/notofonts/noto-fonts), SIL Open Font License; `Assets/QuestBridge/Resources/OFL.txt`.
 - Kenney Interface Sounds, CC0: [происхождение файлов](docs/THIRD_PARTY_AUDIO.md). Четыре коротких звука интерфейса.
-- FastAPI 0.115.12, Pydantic 2.11.7, Uvicorn 0.34.3, HTTPX 0.28.1, python-dotenv 1.1.1; существующие тесты используют pytest 8.4.1. [Лицензии backend](backend/README.md#third-party). SQLite и сервер предпросмотра используют стандартную библиотеку Python.
+- FastAPI 0.115.12, AnyIO 4.14.2, Pydantic 2.11.7, Uvicorn 0.34.3, HTTPX 0.28.1, python-dotenv 1.1.1; существующие тесты используют pytest 8.4.1. [Лицензии backend](backend/README.md#third-party). SQLite и сервер предпросмотра используют стандартную библиотеку Python.
 
 ## Материалы команды
 

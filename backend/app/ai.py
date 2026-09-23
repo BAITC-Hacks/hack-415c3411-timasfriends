@@ -102,11 +102,12 @@ class OpenAIProvider:
     """REST Responses API; retries are owned by AIService, never nested."""
 
     def __init__(self, api_key: str, model: str, timeout: float,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, *, reasoning_effort: str = ""):
         self._api_key = api_key
         self._model = model
         self._timeout = timeout
         self._transport = transport
+        self._reasoning_effort = reasoning_effort.strip()
 
     async def generate(self, task: str, payload: dict, repair: bool = False) -> str:
         instructions = (PROMPTS / f"{task}_system.txt").read_text(encoding="utf-8")
@@ -117,19 +118,22 @@ class OpenAIProvider:
                 "Проверь типы, диапазоны, цитаты USER, пустые неизвестные поля и правила фазы. "
                 "Это единственная попытка исправления."
             )
+        request_body = {
+            "model": self._model,
+            "instructions": instructions,
+            "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            "text": {"format": {"type": "json_schema", "name": f"questbridge_{task}",
+                                 "schema": schema, "strict": True}},
+            "store": False,
+            "max_output_tokens": 4000,
+        }
+        if self._reasoning_effort:
+            request_body["reasoning"] = {"effort": self._reasoning_effort}
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.post(
                 "https://api.openai.com/v1/responses",
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": self._model,
-                    "instructions": instructions,
-                    "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-                    "text": {"format": {"type": "json_schema", "name": f"questbridge_{task}",
-                                         "schema": schema, "strict": True}},
-                    "store": False,
-                    "max_output_tokens": 4000,
-                },
+                json=request_body,
             )
             response.raise_for_status()
             body = response.json()
@@ -276,11 +280,12 @@ class FallbackProvider:
 
 
 class AIService:
-    def __init__(self, api_key: str = "", model: str = "", timeout: float = 4.0,
-                 transport: httpx.AsyncBaseTransport | None = None):
-        self._timeout = max(0.1, min(float(timeout), 4.0))
+    def __init__(self, api_key: str = "", model: str = "", timeout: float = 10.0,
+                 transport: httpx.AsyncBaseTransport | None = None, *, reasoning_effort: str = ""):
+        self._timeout = max(0.1, min(float(timeout), 10.0))
         self._provider: AIProvider | None = (
-            OpenAIProvider(api_key, model, self._timeout, transport) if api_key and model else None
+            OpenAIProvider(api_key, model, self._timeout, transport, reasoning_effort=reasoning_effort)
+            if api_key and model else None
         )
         self._fallback = FallbackProvider()
 

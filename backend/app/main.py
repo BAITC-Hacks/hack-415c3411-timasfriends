@@ -156,7 +156,8 @@ def replay_publication(conn, business_id: str, key: str | None, fingerprint: str
 def create_app(settings: Settings | None = None, ai_service: AIService | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     db = Database(settings.db_path)
-    ai = ai_service or AIService(api_key=settings.ai_api_key, model=settings.ai_model, timeout=settings.ai_timeout)
+    ai = ai_service or AIService(api_key=settings.ai_api_key, model=settings.ai_model,
+                                timeout=settings.ai_timeout, reasoning_effort=settings.ai_reasoning_effort)
 
     @asynccontextmanager
     async def lifespan(app):
