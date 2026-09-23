@@ -25,3 +25,6 @@ Proposed server formula: context 10, need 10, data 20, expected result 15, succe
 - Unity packages are listed in `Packages/manifest.json` and locked in `Packages/packages-lock.json`.
 - Noto Sans Regular: https://github.com/notofonts/noto-fonts, SIL Open Font License; bundled license in `Assets/QuestBridge/Resources/OFL.txt`. Used for Cyrillic text.
 - UI sounds are generated mathematically by our code; no external audio assets.
+## Бизнес-задачи от Claude
+
+[Бизнес-задачи AI Sana от Claude (DOCX)](docs/biznes-zadachi-AI-Sana.docx) — документ, предоставленный участником команды; источник указан с его слов. Исходный файл добавлен без изменений.
