@@ -15,14 +15,19 @@ namespace QuestBridge
         string businessId="business-demo", activeTeamId="team-1", publicationKey="", lastPublicationPayload="";
         int catalogVersion=-1;
         readonly HashSet<string> manualDraftFields=new();
-        RectTransform roleOverlay, teamNavigation;
-        UnityEngine.UI.Button roleButton, mineButton, readinessButton, editDraftButton, confirmDraftButton, publishButton;
+        RectTransform roleOverlay, teamNavigation, editorScoreContent;
+        UnityEngine.UI.Button roleButton, mineButton, readinessButton, editDraftButton, confirmDraftButton, publishButton, retryPreviewButton;
         TMP_Text teamNavigationName, teamNavigationStats, editorScore, editorBreakdown, editorStatus;
         DraftData currentDraft=new DraftData(), editingDraft;
         TaskRecord editingTask, currentDraftTask;
-        int readinessFilter, editorGeneration, editorRevision, previewRevision=-1;
+        int readinessFilter, editorGeneration, editorRevision, previewRevision=-1, reviewedRevision=-1;
         float previewAt;
+        bool previewRunning;
+        string previewError="";
+        ContentReview editorValidation;
         readonly Dictionary<string,TMP_InputField> draftInputs=new();
+        readonly Dictionary<string,TMP_Text> draftIssueLabels=new();
+        static readonly Color InvalidField=Hex(0xB33A32), InvalidBackground=Hex(0xFFF0EE);
         readonly List<UnityEngine.UI.Button> teamMenuButtons=new();
         static readonly string[] DraftFields={"title","category","context","need","users","data","constraints","expectedResult","successCriteria","contact","interactionFormat","feedbackProcess"};
         static readonly string[] FieldLabels={"Название","Тема","Контекст — что происходит сейчас","Потребность — что нужно изменить","Пользователи","Данные и материалы","Ограничения и сроки","Ожидаемый результат","Критерии успеха","Контакт","Формат взаимодействия","Порядок обратной связи"};
@@ -50,6 +55,7 @@ namespace QuestBridge
             { if(root)Notify("Некорректный адрес сервера");return; }
             if(serverUrl==url)return;
             serverUrl=url;onlineSnapshot=false;lastServerSnapshot=null;conversationId="";offlineMessages=0;catalogVersion=-1;currentDraftTask=null;
+            if(editorOpen)DraftChanged();
             if(root){connectionText.text=url.Length==0?"Офлайн-демо":"Подключение…";StartCoroutine(RefreshCatalog());}
         }
         void InitializeWorkflow()
@@ -172,62 +178,112 @@ namespace QuestBridge
             if(existing!=null&&existing.businessId!=businessId){Notify("Изменять задачу может её автор");return;}
             editingPersonal=existing==null;editingTask=existing??currentDraftTask;editingDraft=CloneDraft(editingPersonal?currentDraft:existing.draft);existing=editingTask;
             var pane=WorkflowPane(existing==null?"Карточка задачи":"Редактирование задачи","Проверьте сведения. Неизвестные поля можно оставить пустыми.");
-            editorOpen=true;editorRevision=0;previewRevision=-1;draftConfirmed=false;draftInputs.Clear();
+            editorOpen=true;editorRevision=0;previewRevision=-1;reviewedRevision=-1;draftConfirmed=false;editorValidation=null;previewError="";draftInputs.Clear();draftIssueLabels.Clear();
             var fields=CreateScroll(pane,"Draft fields",.04f,.145f,.59f,.665f,out var scroll);
             float top=0;
             for(int i=0;i<DraftFields.Length;i++)
             {
-                string key=DraftFields[i];float height=i<2?110:138;
+                string key=DraftFields[i];float height=i<2?154:182;
                 var row=WorkflowRow(fields,key,top,height-12);top+=height;
                 Text(row,FieldLabels[i],0,.74f,1,.25f,16,true).rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Top,0,28);
-                var field=WorkflowInput(row,DraftValue(editingDraft,key),FieldHints[i],0,0,1,.70f,i==0?160:i==1?100:2000);draftInputs[key]=field;
+                var field=WorkflowInput(row,DraftValue(editingDraft,key),FieldHints[i],0,0,1,1,i==0?160:i==1?100:2000);draftInputs[key]=field;
+                var fieldRect=(RectTransform)field.transform;fieldRect.offsetMin=new Vector2(0,44);fieldRect.offsetMax=new Vector2(0,-32);
+                var issueLabel=Text(row,"",0,0,1,.23f,14,false,InvalidField);issueLabel.alignment=TextAlignmentOptions.TopLeft;draftIssueLabels[key]=issueLabel;
                 field.onValueChanged.AddListener(value=>{SetDraftValue(editingDraft,key,value);if(editingPersonal)manualDraftFields.Add(key);DraftChanged();});
             }
             fields.sizeDelta=new Vector2(0,top);
             var scorePanel=Surface(pane,"Rating",.655f,.145f,.305f,.665f,Paper);
             Text(scorePanel,"После подтверждения",.07f,.89f,.86f,.065f,17,true);
             editorScore=Text(scorePanel,"… / 100",.07f,.765f,.86f,.12f,35,true,Accent);
-            var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.09f,.86f,.64f,out var scoreScroll);
+            var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.105f,.86f,.625f,out var scoreScroll);editorScoreContent=scoreBody;
             editorBreakdown=Text(scoreBody,"Запрашиваем расчёт…",0,0,1,1,16,false,Muted);editorBreakdown.alignment=TextAlignmentOptions.TopLeft;editorBreakdown.overflowMode=TextOverflowModes.Overflow;
             scoreBody.sizeDelta=new Vector2(0,520);
+            retryPreviewButton=Button(scorePanel,"Повторить проверку",.07f,.015f,.86f,.065f,()=>{DraftChanged();previewAt=Time.unscaledTime;},Blue);
+            retryPreviewButton.GetComponentInChildren<TMP_Text>().fontSize=14;
             confirmDraftButton=Button(pane,"□ Подтверждаю сведения",.04f,.07f,.43f,.054f,()=>{draftConfirmed=!draftConfirmed;SetButtonText(confirmDraftButton,draftConfirmed?"✓ Сведения подтверждены":"□ Подтверждаю сведения");UpdatePublishButton();},Paper);
             publishButton=Button(pane,existing==null?"Опубликовать":"Сохранить изменения",.655f,.055f,.305f,.068f,()=>PublishDraft(),null,true);
             editorStatus=Text(pane,"",.04f,.017f,.59f,.046f,14,false,Muted);
-            UpdatePublishButton();previewAt=Time.unscaledTime;
+            ShowPreviewPending();UpdatePublishButton();previewAt=Time.unscaledTime;
         }
         void DraftChanged()
         {
-            editorRevision++;draftConfirmed=false;SetButtonText(confirmDraftButton,"□ Подтверждаю сведения");previewAt=Time.unscaledTime+.55f;
+            editorRevision++;draftConfirmed=false;editorValidation=null;previewError="";reviewedRevision=-1;
+            SetButtonText(confirmDraftButton,"□ Подтверждаю сведения");previewAt=Time.unscaledTime+.8f;
+            ShowFieldIssues(Array.Empty<ContentIssue>());ShowPreviewPending();
             if(editingPersonal){currentDraft=CloneDraft(editingDraft);SaveDraft();}
             UpdatePublishButton();
+        }
+        bool ApprovedPreview()=>reviewedRevision==editorRevision&&editorValidation?.status=="passed"&&!previewRunning;
+        void SetEditorBreakdown(string value)
+        {
+            if(!editorBreakdown)return;editorBreakdown.text=value;
+            if(editorScoreContent)editorScoreContent.sizeDelta=new Vector2(0,Mathf.Max(360,editorBreakdown.GetPreferredValues(value,Mathf.Max(180,editorScoreContent.rect.width),Mathf.Infinity).y+24));
+        }
+        void ShowPreviewPending()
+        {
+            if(!editorScore)return;
+            editorScore.text=ValidBaseUrl()?"Проверяем…":"Без оценки";
+            SetEditorBreakdown(ValidBaseUrl()?"Проверяем содержание полей. После проверки появится расчёт баллов.":"Для проверки содержания и расчёта баллов подключите сервер. Черновик сохраняется на этом устройстве.");
+        }
+        void ShowFieldIssues(ContentIssue[] issues)
+        {
+            foreach(var item in draftInputs)if(item.Value)item.Value.GetComponent<UnityEngine.UI.Image>().color=Paper;
+            foreach(var label in draftIssueLabels.Values)if(label)label.text="";
+            foreach(var issue in issues??Array.Empty<ContentIssue>())
+            {
+                if(issue==null||string.IsNullOrWhiteSpace(issue.field))continue;
+                if(draftInputs.TryGetValue(issue.field,out var field)&&field)field.GetComponent<UnityEngine.UI.Image>().color=InvalidBackground;
+                if(draftIssueLabels.TryGetValue(issue.field,out var label)&&label)
+                    label.text+=(label.text.Length>0?" ":"")+(string.IsNullOrWhiteSpace(issue.message)?"Уточните содержание этого поля.":issue.message);
+            }
         }
         void UpdatePublishButton()
         {
             if(!publishButton)return;
             bool named=!string.IsNullOrWhiteSpace(editingDraft.title)&&!string.IsNullOrWhiteSpace(editingDraft.category);
-            publishButton.interactable=!publishing&&draftConfirmed&&named&&!string.IsNullOrWhiteSpace(serverUrl);
+            bool checkedDraft=ApprovedPreview(), connected=ValidBaseUrl();
+            publishButton.interactable=!publishing&&draftConfirmed&&named&&connected&&checkedDraft;
             var motion=publishButton.GetComponent<QuestBridgeMotion>();motion.resting=publishButton.interactable?Ink:Hex(0xDDE3E9);motion.hovered=motion.resting;publishButton.GetComponentInChildren<TMP_Text>().color=publishButton.interactable?Color.white:Muted;
-            if(editorStatus)editorStatus.text=publishing?"Сохраняем…":string.IsNullOrWhiteSpace(serverUrl)?"Для публикации запустите сервер по README.":!named?"Заполните название и тему.":!draftConfirmed?"Подтвердите сведения перед публикацией.":"Готово к сохранению. Низкий балл не мешает публикации.";
+            if(confirmDraftButton){confirmDraftButton.interactable=!publishing&&checkedDraft;confirmDraftButton.GetComponentInChildren<TMP_Text>().color=confirmDraftButton.interactable?Ink:Muted;}
+            if(retryPreviewButton)retryPreviewButton.interactable=connected&&!publishing&&!previewRunning;
+            if(editorStatus)editorStatus.text=publishing?"Сохраняем…":!connected?"Подключите сервер для проверки и публикации.":previewError.Length>0?"Проверка не завершена. Повторите её.":reviewedRevision!=editorRevision||previewRunning?"Проверяем содержание. Дождитесь результата.":editorValidation?.status=="rejected"?"Исправьте отмеченные поля и дождитесь новой проверки.":editorValidation?.status!="passed"?"Проверка недоступна. Нажмите «Повторить проверку».":!named?"Заполните название и тему.":!draftConfirmed?"Проверьте сведения и подтвердите публикацию.":"Готово к сохранению. Низкий балл не мешает публикации.";
         }
         void UpdateWorkflow()
         {
-            if(editorOpen&&detailOverlay&&previewRevision!=editorRevision&&Time.unscaledTime>=previewAt&&!publishing)
-            {previewRevision=editorRevision;StartCoroutine(PreviewDraft(editorGeneration,editorRevision,CloneDraft(editingDraft)));}
+            if(editorOpen&&detailOverlay&&ValidBaseUrl()&&!previewRunning&&previewRevision!=editorRevision&&Time.unscaledTime>=previewAt&&!publishing)
+            {previewRevision=editorRevision;previewRunning=true;UpdatePublishButton();StartCoroutine(PreviewDraft(editorGeneration,editorRevision,CloneDraft(editingDraft)));}
         }
         IEnumerator PreviewDraft(int generation,int revision,DraftData draft)
         {
+            try
+            {
             yield return ApiRequest<ScorePreview>("POST","/api/tasks/preview",new PreviewBody{draft=draft,confirmedFields=FilledFields(draft)},score=>
             {
                 if(!editorOpen||generation!=editorGeneration||revision!=editorRevision||!editorScore)return;
-                editorScore.text=score.readiness+" / 100";
-                var lines=new StringBuilder(ReadinessName(score.readiness)+"\n\n");
+                reviewedRevision=revision;previewError="";editorValidation=score.validation;
+                if(editorValidation==null)editorValidation=new ContentReview{status="unavailable",message="Сервер не вернул проверку содержания. Повторите проверку после обновления сервера."};
+                ShowFieldIssues(editorValidation.issues);
+                bool scored=editorValidation.status=="passed"||editorValidation.status=="rejected";
+                editorScore.text=editorValidation.status=="passed"?score.readiness+" / 100":editorValidation.status=="rejected"?"Нужны правки":"Без оценки";
+                var lines=new StringBuilder(editorValidation.status=="passed"?ReadinessName(score.readiness)+"\n\n":"");
+                if(!string.IsNullOrWhiteSpace(editorValidation.message))lines.Append(editorValidation.message).Append("\n\n");
+                if(editorValidation.status=="passed"&&editorValidation.aiMode=="fallback")lines.Append("AI не подключён. Выполнена локальная проверка.\n\n");
+                foreach(var issue in editorValidation.issues??Array.Empty<ContentIssue>())
+                    if(issue!=null)lines.Append(ShortLabel(issue.field)).Append(": ").Append(issue.message).Append("\n\n");
+                if(!scored){lines.Append("Нажмите «Повторить проверку». Публикация доступна после проверки.");SetEditorBreakdown(lines.ToString());return;}
                 foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(row.points>0?"✓ ":"○ ").Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
-                lines.Append("\nБаллы за заполненные и подтверждённые поля.");editorBreakdown.text=lines.ToString();
-            },error=>{if(editorOpen&&generation==editorGeneration&&revision==editorRevision&&editorScore){editorScore.text="— / 100";editorBreakdown.text=error;}});
+                lines.Append("\nБаллы показывают полноту описания после подтверждения. Они не доказывают истинность сведений.");SetEditorBreakdown(lines.ToString());
+            },error=>
+            {
+                if(editorOpen&&generation==editorGeneration&&revision==editorRevision&&editorScore)
+                {reviewedRevision=revision;previewError=error;editorValidation=null;editorScore.text="Без оценки";SetEditorBreakdown(error+"\n\nНажмите «Повторить проверку».");}
+            });
+            }
+            finally{previewRunning=false;if(editorOpen)UpdatePublishButton();}
         }
         void PublishDraft()
         {
-            if(publishing||!draftConfirmed)return;
+            if(publishing||!draftConfirmed||!ApprovedPreview()||!ValidBaseUrl()||string.IsNullOrWhiteSpace(editingDraft.title)||string.IsNullOrWhiteSpace(editingDraft.category))return;
             publishing=true;UpdatePublishButton();foreach(var field in draftInputs.Values)field.interactable=false;confirmDraftButton.interactable=false;
             var draft=CloneDraft(editingDraft);string[] confirmed=FilledFields(draft);int generation=editorGeneration;bool personal=editingPersonal;
             object body=editingTask==null?new PublishBody{businessId=businessId,conversationId=conversationId,draft=draft,confirmed=true,confirmedFields=confirmed}:
@@ -243,7 +299,9 @@ namespace QuestBridge
             },error=>
             {
                 publishing=false;if(!editorOpen||generation!=editorGeneration){Notify(error);return;}
-                foreach(var field in draftInputs.Values)if(field)field.interactable=true;if(confirmDraftButton)confirmDraftButton.interactable=true;UpdatePublishButton();if(editorStatus)editorStatus.text=error;
+                foreach(var field in draftInputs.Values)if(field)field.interactable=true;
+                draftConfirmed=false;editorValidation=null;previewError=error;SetButtonText(confirmDraftButton,"□ Подтверждаю сведения");
+                if(editorScore)editorScore.text="Без оценки";SetEditorBreakdown(error+"\n\nИсправьте сведения или повторите проверку.");UpdatePublishButton();
             }));
         }
         void OpenServerTask(Card card)

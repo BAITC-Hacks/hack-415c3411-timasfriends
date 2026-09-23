@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "accepted": {"type": "boolean"},
+    "issues": {
+      "type": "array", "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string", "enum": ["title", "category", "context", "need", "users", "data", "constraints", "expectedResult", "successCriteria", "contact", "interactionFormat", "feedbackProcess"]},
+          "code": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z_]+$"},
+          "message": {"type": "string", "minLength": 1, "maxLength": 1000}
+        },
+        "required": ["field", "code", "message"], "additionalProperties": false
+      }
+    },
+    "message": {"type": "string", "minLength": 1, "maxLength": 2000}
+  },
+  "required": ["accepted", "issues", "message"],
+  "additionalProperties": false
+}

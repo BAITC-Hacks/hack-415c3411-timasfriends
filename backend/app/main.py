@@ -1,6 +1,7 @@
 """QuestBridge API. All profile switches are explicitly a local demo convention."""
 
 from contextlib import asynccontextmanager
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -16,7 +17,7 @@ from .ai import AIService
 from .config import Settings
 from .db import Database, add_event, dumps, new_id, utc_now
 from .models import (
-    CatalogCard, CatalogResponse, ChatRequest, ChatResponse, ConfirmMilestoneRequest,
+    CatalogCard, CatalogResponse, ChatRequest, ChatResponse, ConfirmMilestoneRequest, ContentReview,
     DecisionRequest, Draft, ErrorBody, ErrorResponse, Event, EventsResponse, FieldSource,
     HealthResponse, MilestoneListResponse, MilestoneRequest, MilestoneResponse, PreviewRequest, PreviewResponse,
     ProposalDetails, ProposalListResponse, ProposalRequest, ProposalResponse,
@@ -130,6 +131,15 @@ def require_publishable(body: PublishTaskRequest):
         raise APIError(422, "title_category_required", "Для публикации нужны название и категория.")
 
 
+def require_valid_content(review: ContentReview):
+    if review.status == "unavailable":
+        raise APIError(503, "content_review_unavailable",
+                       "Проверка содержания временно недоступна. Повторите проверку перед публикацией.")
+    if review.status == "rejected" or review.issues:
+        details = " ".join(issue.message for issue in review.issues[:3]) or review.message
+        raise APIError(422, "content_invalid", ("Исправьте данные карточки. " + details)[:2000])
+
+
 def sources_for_task(conn, body: PublishTaskRequest, previous: TaskResponse | None = None) -> list[FieldSource]:
     if body.conversationId:
         conv = require_row(conn, "conversations", body.conversationId)
@@ -236,8 +246,10 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
         history.append({"id": new_id("msg"), "role": "user", "content": body.message})
         response = await ai.chat(conversation_id=conversation_id, history=history, draft=draft, sources=sources)
         response = ChatResponse.model_validate(response)
+        history[-1]["inputAccepted"] = response.inputAccepted
         history.append({"id": new_id("msg"), "role": "assistant", "content": response.message,
                         "phase": response.phase,
+                        "inputAccepted": response.inputAccepted,
                         "questions": [question.model_dump() for question in response.questions]})
         # Persist the current question together with each answer and partial draft.
         # This keeps the next step and plain-answer mapping stable after restart.
@@ -257,8 +269,9 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
         return response
 
     @app.post("/api/tasks/preview", response_model=PreviewResponse)
-    def preview(body: PreviewRequest):
-        return score_draft(body.draft, body.confirmedFields)
+    async def preview(body: PreviewRequest):
+        review = await ai.review(body.draft)
+        return score_draft(body.draft, body.confirmedFields, review)
 
     @app.post("/api/tasks", response_model=TaskResponse, status_code=201)
     async def publish(body: PublishTaskRequest, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")] = None):
@@ -270,7 +283,10 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             if replay is not None:
                 return replay
             sources_for_task(conn, body)
-        clarity = await ai.clarity(body.draft)
+        require_valid_content(score_draft(body.draft, []).validation)
+        review, clarity = await asyncio.gather(ai.review(body.draft), ai.clarity(body.draft))
+        scored = score_draft(body.draft, body.confirmedFields, review)
+        require_valid_content(scored.validation)
         timestamp, task_id = utc_now(), new_id("task")
         with db.write() as conn:
             replay = replay_publication(conn, body.businessId, idempotency_key, fingerprint)
@@ -278,7 +294,7 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
                 return replay
             task = TaskResponse(
                 id=task_id, businessId=body.businessId, draft=body.draft, confirmed=True,
-                confirmedFields=body.confirmedFields, **score_draft(body.draft, body.confirmedFields).model_dump(),
+                confirmedFields=body.confirmedFields, **scored.model_dump(),
                 **clarity.model_dump(), version=1, createdAt=timestamp, updatedAt=timestamp,
                 teamIds=[], proposalCount=0, sources=sources_for_task(conn, body), demo=False,
             )
@@ -306,7 +322,13 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             if (changed & set(body.confirmedFields)) - set(body.reconfirmedFields):
                 raise APIError(409, "reconfirmation_required", "Изменённые поля требуют повторного подтверждения в reconfirmedFields или удаления из confirmedFields.")
             sources_for_task(conn, body, previous)
-        clarity = await ai.clarity(body.draft) if changed else None
+        require_valid_content(score_draft(body.draft, []).validation)
+        if changed:
+            review, clarity = await asyncio.gather(ai.review(body.draft), ai.clarity(body.draft))
+        else:
+            review, clarity = await ai.review(body.draft), None
+        scored = score_draft(body.draft, body.confirmedFields, review)
+        require_valid_content(scored.validation)
         with db.write() as conn:
             current = task_response(conn, task_id)
             if current.version != body.version:
@@ -315,7 +337,7 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             updated.update(draft=body.draft.model_dump(), confirmedFields=body.confirmedFields,
                            sources=[s.model_dump() for s in sources_for_task(conn, body, current)],
                            version=current.version + 1, updatedAt=utc_now())
-            updated.update(score_draft(body.draft, body.confirmedFields).model_dump())
+            updated.update(scored.model_dump())
             if clarity is not None:
                 updated.update(clarity.model_dump())
             task = TaskResponse.model_validate(updated)

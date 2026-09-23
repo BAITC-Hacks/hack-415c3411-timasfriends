@@ -28,6 +28,18 @@ WEIGHTS = {
     "interactionFormat": 3,
     "feedbackProcess": 3,
 }
+MEANINGFUL_VALUES = {
+    "context": "Преподаватели проверяют работы вручную",
+    "need": "Сократить время ручной проверки",
+    "users": "Преподаватели учебного центра",
+    "data": "Обезличенные работы и эталоны ответов",
+    "constraints": "Использовать только синтетические данные",
+    "expectedResult": "Прототип загрузки работ и таблица оценок",
+    "successCriteria": "Оценки совпадают с эталоном в 27 из 30 работ",
+    "contact": "teacher@example.test",
+    "interactionFormat": "Обсуждение вопросов в чате",
+    "feedbackProcess": "Преподаватель проверяет промежуточную версию",
+}
 
 
 @pytest.fixture
@@ -168,7 +180,7 @@ def test_health_and_exact_catalog_contract(client):
 
 
 def test_readiness_is_deterministic_and_counts_only_confirmed_content(client):
-    complete = draft(**{field: f"Содержательное значение поля {field}" for field in WEIGHTS})
+    complete = draft(**MEANINGFUL_VALUES)
     payload = {"draft": complete, "confirmedFields": list(WEIGHTS)}
     first = client.post("/api/tasks/preview", json=payload)
     assert first.status_code == 200, first.text
@@ -220,7 +232,7 @@ def test_readiness_level_boundaries(client, fields, score, level):
     response = client.post(
         "/api/tasks/preview",
         json={
-            "draft": draft(**{field: "Конкретное описание" for field in fields}),
+            "draft": draft(**{field: MEANINGFUL_VALUES[field] for field in fields}),
             "confirmedFields": list(fields),
         },
     )
@@ -263,7 +275,10 @@ def test_fallback_chat_has_three_sequential_questions_then_editable_unpublished_
     )
     assert response.status_code == 200, response.text
     first = response.json()
-    assert set(first) == {"conversationId", "message", "phase", "aiMode", "questions", "draft", "sources", "missingFields"}
+    assert set(first) == {"conversationId", "message", "phase", "aiMode", "questions", "draft", "sources",
+                          "missingFields", "inputAccepted", "validation"}
+    assert first["inputAccepted"] is True
+    assert first["validation"]["status"] == "passed"
     assert first["conversationId"]
     assert first["phase"] == "clarifying"
     assert first["aiMode"] == "fallback"
@@ -484,6 +499,7 @@ def test_catalog_polling_and_other_reads_never_call_ai(settings):
             super().__init__(api_key="", model="")
             self.chat_calls = 0
             self.clarity_calls = 0
+            self.review_calls = 0
 
         async def chat(self, conversation_id, history, draft, sources):
             self.chat_calls += 1
@@ -493,13 +509,18 @@ def test_catalog_polling_and_other_reads_never_call_ai(settings):
             self.clarity_calls += 1
             return await super().clarity(draft)
 
+        async def _review_draft(self, draft):
+            self.review_calls += 1
+            return await super()._review_draft(draft)
+
     ai = CountingAI()
     with TestClient(create_app(settings=settings, ai_service=ai)) as polling_client:
         task = publish(polling_client)
         polling_client.post("/api/chat", json={"conversationId": "", "message": "Нужен тренажёр дробей"})
-        calls = (ai.chat_calls, ai.clarity_calls)
+        calls = (ai.chat_calls, ai.clarity_calls, ai.review_calls)
         assert calls[0] >= 1
         assert calls[1] >= 1
+        assert calls[2] >= 1
         snapshot = polling_client.get("/api/catalog").json()
         for _ in range(5):
             assert polling_client.get("/api/catalog").json() == snapshot
@@ -509,7 +530,7 @@ def test_catalog_polling_and_other_reads_never_call_ai(settings):
             assert polling_client.post(
                 "/api/tasks/preview", json={"draft": task["draft"], "confirmedFields": []}
             ).status_code == 200
-        assert (ai.chat_calls, ai.clarity_calls) == calls
+        assert (ai.chat_calls, ai.clarity_calls, ai.review_calls) == calls
         update = publication(task["draft"])
         update["version"] = task["version"]
         response = polling_client.patch(f"/api/tasks/{task['id']}", json=update)

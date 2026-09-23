@@ -11,7 +11,18 @@ from backend.app.scoring import WEIGHTS, is_filled, readiness_level, score_draft
 
 @pytest.fixture
 def filled_draft():
-    return Draft(**{field: "Подтверждённый факт" for field in WEIGHTS})
+    return Draft(
+        context="Преподаватели проверяют работы вручную",
+        need="Сократить время ручной проверки",
+        users="Преподаватели учебного центра",
+        data="Обезличенные работы и эталоны ответов",
+        constraints="Использовать только синтетические данные",
+        expectedResult="Прототип загрузки работ и таблица оценок",
+        successCriteria="Оценки совпадают с эталоном в 27 из 30 работ",
+        contact="teacher@example.test",
+        interactionFormat="Обсуждение вопросов в чате",
+        feedbackProcess="Преподаватель проверяет промежуточную версию",
+    )
 
 
 def test_weights_total_one_hundred_and_title_category_do_not_score(filled_draft):

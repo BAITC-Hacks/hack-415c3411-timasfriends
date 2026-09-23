@@ -15,7 +15,7 @@ namespace QuestBridge
     [Serializable] public class Card { public string id, title, description, category, businessId; public int readiness; public float clarity; public string[] teamIds; public bool demo; }
     [Serializable] public class Snapshot { public Card[] cards; public Team[] teams; public int version; }
     [Serializable] public class ChatRequest { public string message, conversationId; }
-    [Serializable] public class ChatReply { public string message, conversationId, aiMode, phase; public DraftData draft; public string[] missingFields; }
+    [Serializable] public class ChatReply { public string message, conversationId, aiMode, phase; public DraftData draft; public string[] missingFields; public bool inputAccepted=true; public ContentReview validation; }
 
     public sealed partial class QuestBridgeApp : MonoBehaviour
     {
@@ -428,9 +428,27 @@ namespace QuestBridge
         void RememberOfflineAnswer(string field,string message)
         {
             if(manualDraftFields.Contains(field))return;
-            string value=message.Trim(),normalized=value.Trim(' ','.','!','?').ToLowerInvariant();
-            if(new[]{"не знаю","пока не знаю","неизвестно","не указано","нет данных","данных нет","нет","tbd","n/a","unknown","-"}.Contains(normalized))return;
+            string value=message.Trim();
+            if(UnknownOfflineAnswer(value))return;
             SetDraftValue(currentDraft,field,value.Length>2000?value.Substring(0,2000):value);
+        }
+        static bool UnknownOfflineAnswer(string value)
+        {
+            string normalized=(value??"").Trim().Trim(' ','.','!','?').ToLowerInvariant();
+            return new[]{"не знаю","пока не знаю","неизвестно","не указано","нет данных","данных нет","нет","білмеймін","әзірге білмеймін","белгісіз","мәлімет жоқ","деректер жоқ","көрсетілмеген","жоқ","tbd","n/a","unknown","-"}.Contains(normalized);
+        }
+        static bool ObviousOfflineJunk(string value)
+        {
+            if(UnknownOfflineAnswer(value))return false;
+            string letters=new string(value.Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());
+            if(letters.Length==0&&!value.Any(char.IsDigit))return true;
+            if(letters.Length>=6&&letters.Distinct().Count()<=2)return true;
+            string[] keyboardFragments={"asd","asdf","asdfgh","asdasd","asdasdasd","qwer","qwerty","qwertyuiop","zxcv","zxcvbn","йцук","йцукен","йцукенгш","фыва","фывапр","ываыва"};
+            if(keyboardFragments.Any(fragment=>letters.Length>=fragment.Length&&letters.Replace(fragment,"").Length==0))return true;
+            string[] keyboardRows={"qwertyuiop","asdfghjkl","zxcvbnm","йцукенгшщзхъ","фывапролджэ","ячсмитьбю"};
+            string[] keyboardMarkers={"qwer","asdf","zxcv","йцук","цукен","фыв","ывапр","пролдж","ячсм"};
+            return letters.Length>=4&&keyboardMarkers.Any(marker=>letters.Contains(marker))&&
+                keyboardRows.Any(row=>letters.Count(letter=>row.IndexOf(letter)>=0)>=letters.Length*.8f);
         }
         void ShowOfflineQuestion()
         {
@@ -455,10 +473,23 @@ namespace QuestBridge
             if(string.IsNullOrWhiteSpace(serverUrl))
             {
                 yield return new WaitForSecondsRealtime(.55f);
-                if(offlineMessages==0)RememberOfflineAnswer("context",message);
-                else if(offlineMessages<=OfflineQuestionFields.Length)RememberOfflineAnswer(OfflineQuestionFields[offlineMessages-1],message);
-                offlineMessages=Mathf.Min(offlineMessages+1,OfflineQuestions.Length+1);
-                SaveDraft();PlayerPrefs.Save();ShowOfflineQuestion();success=true;
+                bool answeringQuestion=offlineMessages>=1&&offlineMessages<=OfflineQuestions.Length;
+                if((UnknownOfflineAnswer(message)&&!answeringQuestion)||ObviousOfflineJunk(message))
+                {
+                    assistantMode.text="Без ИИ · локальная проверка";draftStatus.text="Уточните ответ";
+                    string feedback=answeringQuestion?
+                        "Не удалось понять ответ. Опишите его обычными словами; если сведений пока нет, напишите «не знаю».\n"+OfflineQuestions[offlineMessages-1]:
+                        offlineMessages==0?"Сначала опишите проблему: что сейчас не получается и кому это мешает. Какую задачу вы хотите решить?":
+                        "Уточнения завершены. Откройте карточку, чтобы дополнить или исправить сведения.";
+                    AddMessage(feedback,false);
+                }
+                else
+                {
+                    if(offlineMessages==0)RememberOfflineAnswer("context",message);
+                    else if(offlineMessages<=OfflineQuestionFields.Length)RememberOfflineAnswer(OfflineQuestionFields[offlineMessages-1],message);
+                    offlineMessages=Mathf.Min(offlineMessages+1,OfflineQuestions.Length+1);
+                    SaveDraft();PlayerPrefs.Save();ShowOfflineQuestion();success=true;
+                }
             }
             else
             {
@@ -468,9 +499,22 @@ namespace QuestBridge
                     if(req.result==UnityWebRequest.Result.Success)
                     {
                         ChatReply reply=null;try{reply=JsonUtility.FromJson<ChatReply>(req.downloadHandler.text);if(reply==null||string.IsNullOrWhiteSpace(reply.message)||reply.message.Length>12000||string.IsNullOrWhiteSpace(reply.conversationId))throw new ArgumentException();}catch(ArgumentException){reply=null;}
-                        if(reply!=null){conversationId=reply.conversationId;AddMessage(reply.message,false);assistantMode.text=reply.aiMode=="fallback"?"Без ИИ · пошаговый режим":"ИИ подключён";draftStatus.text=reply.phase=="draft_ready"?"Карточка готова к правкам":"Уточняем задачу";AcceptDraft(reply);success=true;}
+                        if(reply!=null)
+                        {
+                            conversationId=reply.conversationId;AddMessage(reply.message,false);
+                            assistantMode.text=reply.aiMode=="fallback"?"Без ИИ · пошаговый режим":"ИИ подключён";
+                            bool accepted=reply.validation==null||reply.inputAccepted;
+                            draftStatus.text=accepted?(reply.phase=="draft_ready"?"Карточка готова к правкам":"Уточняем задачу"):reply.validation?.status=="unavailable"?"Повторите проверку ответа":"Уточните ответ";
+                            if(accepted){AcceptDraft(reply);success=true;}
+                        }
+                        else AddMessage("Ответ сервера имеет неверный формат. Ваш текст сохранён.",false);
                     }
-                    if(!success)AddMessage("Сервер не ответил. Ваш текст сохранён — отправьте его ещё раз.",false);
+                    else
+                    {
+                        string error="Сервер не ответил. Ваш текст сохранён — отправьте его ещё раз.";
+                        try{var parsed=JsonUtility.FromJson<APIErrorEnvelope>(req.downloadHandler.text);if(!string.IsNullOrWhiteSpace(parsed?.error?.message))error=parsed.error.message;}catch(ArgumentException){}
+                        AddMessage(error,false);
+                    }
                 }
             }
             if(success){input.text="";pendingMessage="";}input.interactable=true;sending=false;sendButton.interactable=true;newChatButton.interactable=true;SetButtonText(sendButton,"Отправить");if(success)Play(riseClip);
