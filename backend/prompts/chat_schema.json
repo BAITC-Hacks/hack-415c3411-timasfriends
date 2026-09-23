@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {"type": "string", "minLength": 1, "maxLength": 6000},
+    "phase": {"type": "string", "enum": ["clarifying", "draft_ready"]},
+    "questions": {
+      "type": "array", "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 80},
+          "field": {"$ref": "#/$defs/fieldName"},
+          "text": {"type": "string", "minLength": 1, "maxLength": 2000}
+        },
+        "required": ["id", "field", "text"], "additionalProperties": false
+      }
+    },
+    "draft": {"anyOf": [{"$ref": "#/$defs/draft"}, {"type": "null"}]},
+    "sources": {
+      "type": "array", "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"$ref": "#/$defs/fieldName"},
+          "messageId": {"type": "string", "minLength": 1, "maxLength": 80},
+          "quote": {"type": "string", "minLength": 1, "maxLength": 6000}
+        },
+        "required": ["field", "messageId", "quote"], "additionalProperties": false
+      }
+    }
+  },
+  "required": ["message", "phase", "questions", "draft", "sources"],
+  "additionalProperties": false,
+  "$defs": {
+    "fieldName": {"type": "string", "enum": ["title", "category", "context", "need", "users", "data", "constraints", "expectedResult", "successCriteria", "contact", "interactionFormat", "feedbackProcess"]},
+    "draft": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string", "maxLength": 160},
+        "category": {"type": "string", "maxLength": 100},
+        "context": {"type": "string", "maxLength": 2000},
+        "need": {"type": "string", "maxLength": 2000},
+        "users": {"type": "string", "maxLength": 2000},
+        "data": {"type": "string", "maxLength": 2000},
+        "constraints": {"type": "string", "maxLength": 2000},
+        "expectedResult": {"type": "string", "maxLength": 2000},
+        "successCriteria": {"type": "string", "maxLength": 2000},
+        "contact": {"type": "string", "maxLength": 2000},
+        "interactionFormat": {"type": "string", "maxLength": 2000},
+        "feedbackProcess": {"type": "string", "maxLength": 2000}
+      },
+      "required": ["title", "category", "context", "need", "users", "data", "constraints", "expectedResult", "successCriteria", "contact", "interactionFormat", "feedbackProcess"],
+      "additionalProperties": false
+    }
+  }
+}

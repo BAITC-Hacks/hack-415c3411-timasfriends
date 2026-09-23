@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "clarity": {"type": "number", "minimum": 0, "maximum": 10},
+    "clarityReason": {"type": "string", "minLength": 1, "maxLength": 1000}
+  },
+  "required": ["clarity", "clarityReason"],
+  "additionalProperties": false
+}
