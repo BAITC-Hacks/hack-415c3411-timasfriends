@@ -55,6 +55,9 @@ namespace QuestBridge
         float dismissMaxDistance;
         bool dismissStartedOutside;
         string filterBeforeDemo="Все";
+        bool mineBeforeDemo;
+        int readinessBeforeDemo;
+        string readinessCaptionBeforeDemo="Любая готовность";
         float lastChatWidth;
         const float RowHeight=224;
         sealed class ChatBubble { public RectTransform rect; public TMP_Text label; public bool user; public float top,height; }
@@ -116,7 +119,7 @@ namespace QuestBridge
             var b=r.gameObject.AddComponent<UnityEngine.UI.Button>();b.targetGraphic=r.GetComponent<UnityEngine.UI.Image>();b.transition=UnityEngine.UI.Selectable.Transition.None;b.targetGraphic.CrossFadeColor(Color.white,0,true,true);
             Text(r,title,.06f,0,.88f,1,17,true,dark?Color.white:Ink).alignment=TextAlignmentOptions.Center;
             var motion=r.gameObject.AddComponent<QuestBridgeMotion>();motion.surface=r.GetComponent<UnityEngine.UI.Image>();motion.resting=normal;motion.hovered=Color.Lerp(normal,dark?Accent:Color.white,.18f);
-            b.onClick.AddListener(()=>{Play(clickClip);motion.Pulse(.025f);action();});return b;
+            b.onClick.AddListener(()=>{QuestBridgeBrowserText.CloseActive();Play(clickClip);motion.Pulse(.025f);action();});return b;
         }
         RectTransform Avatar(Transform p,Team team,float x,float y,float diameter,Action action=null)
         {
@@ -142,10 +145,7 @@ namespace QuestBridge
             root.gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();if(!FindFirstObjectByType<EventSystem>())new GameObject("EventSystem",typeof(EventSystem),typeof(InputSystemUIInputModule));
             Surface(root,"Page",0,0,1,1,Paper,false);entrance=root.gameObject.AddComponent<CanvasGroup>();entrance.alpha=0;
             Surface(root,"Header",0,.902f,1,.098f,Color.white,false);Surface(root,"Header rule",0,.902f,1,.0012f,Line,false);
-            // A bridge made from three aligned shapes, at a fixed logical size.
-            var mark=Rect(root,"Bridge mark",.027f,.951f,0,0);mark.sizeDelta=new Vector2(34,34);
-            Surface(mark,"Left pillar",0,.10f,.24f,.8f,Ink);Surface(mark,"Right pillar",.76f,.10f,.24f,.8f,Ink);Surface(mark,"Span",.12f,.53f,.76f,.24f,Accent);
-            Text(root,"QuestBridge",.057f,.923f,.26f,.055f,27,true);
+            DrawBrand(root,.025f,.918f,.16f,.067f);
             var state=Surface(root,"Connection",.698f,.924f,.155f,.051f,Paper);
             connectionText=Text(state,string.IsNullOrWhiteSpace(serverUrl)?"Офлайн-демо":"Подключение…",.07f,0,.86f,1,15,true,Muted);connectionText.alignment=TextAlignmentOptions.Center;
             soundButton=Button(root,sound?"Звук: вкл":"Звук: выкл",.866f,.924f,.108f,.051f,()=>{sound=!sound;PlayerPrefs.SetInt("QuestBridge.Sound",sound?1:0);SetButtonText(soundButton,sound?"Звук: вкл":"Звук: выкл");if(sound)Play(clickClip);},Paper);
@@ -176,6 +176,7 @@ namespace QuestBridge
             filters["Образование"]=Button(middle,"Образование",.164f,.779f,.31f,.057f,()=>SetFilter("Образование"),Color.white);
             filters["Бизнес"]=Button(middle,"Бизнес",.491f,.779f,.205f,.057f,()=>SetFilter("Бизнес"),Color.white);
             demoButton=Button(middle,"Демо",.785f,.779f,.215f,.057f,ToggleDemo,Blue);
+            demoButton.gameObject.SetActive(Application.isEditor||WebShowcaseEnabled());
             content=CreateScroll(middle,"Task list",-.007f,.014f,1.014f,.739f,out catalogScroll);
             // Events have a single temporary toast instead of permanent helper copy.
             var toast=Surface(root,"Event toast",.35f,.820f,.37f,.065f,Ink);toastGroup=toast.gameObject.AddComponent<CanvasGroup>();toastGroup.alpha=0;toastGroup.blocksRaycasts=false;
@@ -189,8 +190,9 @@ namespace QuestBridge
         }
         void ResetConversation()
         {
+            QuestBridgeBrowserText.CloseActive();
             if(sending||publishing)return;conversationId="";pendingMessage="";offlineMessages=0;chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;input.text="";
-            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();SaveDraft();PlayerPrefs.Save();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
+            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();ResetScoreFeedbackState();SaveDraft();PlayerPrefs.Save();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
             AddMessage("Какую проблему бизнеса хотите решить? Опишите её своими словами.",false,false);
         }
         static void SetButtonText(UnityEngine.UI.Button b,string value)=>b.GetComponentInChildren<TMP_Text>().text=value;
@@ -252,6 +254,8 @@ namespace QuestBridge
         }
         static bool IsExample(Card card)=>card.demo||(card.title??"").StartsWith("ДЕМО:",StringComparison.OrdinalIgnoreCase);
         static string CardTitle(Card card)=>IsExample(card)&&(card.title??"").StartsWith("ДЕМО:",StringComparison.OrdinalIgnoreCase)?card.title.Substring(5).Trim():card.title;
+        static string TeamName(Team team)=>(team?.name??"Команда").Replace(" (демо)","");
+        static string TeamDescription(Team team)=>(team?.description??"").StartsWith("ДЕМО. ",StringComparison.Ordinal)?team.description.Substring(6):team?.description??"";
         CardView CreateCard(Card data,int rank,bool animate)
         {
             var r=Surface(content,"Task "+data.id,.007f,1,.986f,0,Line,true,true);r.pivot=new Vector2(.5f,1);r.sizeDelta=new Vector2(0,RowHeight-14);
@@ -279,7 +283,7 @@ namespace QuestBridge
             for(int i=0;i<sorted.Length;i++)
             {
                 var card=sorted[i];if(!cards.TryGetValue(card.id,out var v)){v=CreateCard(card,i,animate);cards.Add(card.id,v);}
-                v.data=card;v.title.text=CardTitle(card);v.description.text=card.description;v.rank.text=(i+1).ToString("00");v.meta.text=(IsExample(card)?"Пример · ":"")+(card.category??"Задача")+" · "+ReadinessName(card.readiness);v.meta.color=IsExample(card)?Accent:Muted;
+                v.data=card;v.title.text=CardTitle(card);v.description.text=card.description;v.rank.text=(i+1).ToString("00");v.meta.text=(IsExample(card)?"Пример · ":"")+(card.category??"Задача")+" · "+ReadinessName(card.readiness)+(!IsExample(card)&&card.clarity>0?" · ИИ "+card.clarity.ToString("0.0")+"/10":"");v.meta.color=IsExample(card)?Accent:Muted;
                 v.rank.transform.parent.GetComponent<UnityEngine.UI.Image>().color=i==0?Ink:Paper;v.rank.color=i==0?Color.white:Ink;v.motion.resting=i==0?Hex(0xF0F7FF):Color.white;v.motion.hovered=i==0?Hex(0xE5F2FF):Hex(0xF6FAFE);
                 var ids=(card.teamIds??Array.Empty<string>()).Distinct().ToArray();string fp=string.Join("|",ids.Select(id=>id+":"+next.teams.First(t=>t.id==id).initials));
                 if(v.teamFingerprint!=fp)
@@ -337,9 +341,9 @@ namespace QuestBridge
             }
             Button(right,"×",.79f,.915f,.13f,.052f,()=>ShowTeam(null,null,true),Paper);
             var banner=Surface(right,"Team identity",.08f,.625f,.84f,.215f,Paper);Avatar(banner,team,.5f,.67f,64);
-            Text(banner,team.name,.06f,.075f,.88f,.31f,20,true).alignment=TextAlignmentOptions.Center;
-            Text(right,team.description,.08f,.447f,.84f,.147f,17,false,Muted);
-            Text(right,"Стек",.08f,.384f,.84f,.05f,16,true);Text(right,team.stack,.08f,.309f,.84f,.071f,17);
+            Text(banner,TeamName(team),.06f,.075f,.88f,.31f,20,true).alignment=TextAlignmentOptions.Center;
+            QuestBridgeBrowserText.AttachSelectable(Text(right,TeamDescription(team),.08f,.447f,.84f,.147f,17,false,Muted));
+            Text(right,"Стек",.08f,.384f,.84f,.05f,16,true);QuestBridgeBrowserText.AttachSelectable(Text(right,team.stack,.08f,.309f,.84f,.071f,17));
             Surface(right,"Experience divider",.08f,.286f,.84f,.0015f,Line,false);
             Text(right,team.completed.ToString(),.08f,.164f,.25f,.098f,36,true);
             Text(right,"этапов\nподтверждено",.36f,.168f,.57f,.089f,16,false,Muted);
@@ -356,6 +360,7 @@ namespace QuestBridge
             var pane=Surface(detailOverlay,"Detail pane",.24f,.14f,.52f,.72f,Color.white,true,true);
             Text(pane,(IsExample(card)?"Пример  ·  ":"")+(card.category??"Задача"),.07f,.85f,.73f,.05f,16,true,Accent);Text(pane,CardTitle(card),.07f,.65f,.76f,.18f,32,true);Button(pane,"×",.88f,.85f,.07f,.065f,CloseDetails,Paper);
             var body=CreateScroll(pane,"Description",.07f,.36f,.86f,.27f,out var bodyScroll);var description=Text(body,card.description,0,0,1,1,20);description.verticalAlignment=VerticalAlignmentOptions.Top;description.overflowMode=TextOverflowModes.Overflow;
+            QuestBridgeBrowserText.AttachSelectable(description);
             Canvas.ForceUpdateCanvases();body.sizeDelta=new Vector2(0,Mathf.Max(150,description.GetPreferredValues(card.description,bodyScroll.viewport.rect.width,0).y+24));Surface(pane,"Rule",.07f,.27f,.86f,.002f,Line,false);
             Text(pane,card.readiness+"%",.07f,.145f,.21f,.10f,34,true);Text(pane,"Полнота описания",.30f,.18f,.63f,.05f,19,true);
             Text(pane,"Баллы за заполненные и подтверждённые поля.",.30f,.115f,.63f,.06f,15,false,Muted);
@@ -363,7 +368,7 @@ namespace QuestBridge
             else if(card.clarity>0)Text(pane,"Ясность формулировки: "+card.clarity.ToString("0.0")+" / 10",.07f,.038f,.86f,.06f,15,false,Muted);
             StartCoroutine(FadeBubble(pane.gameObject.AddComponent<CanvasGroup>()));
         }
-        void CloseDetails(){editorOpen=false;editorGeneration++;if(!detailOverlay)return;detailOverlay.gameObject.SetActive(false);Destroy(detailOverlay.gameObject);detailOverlay=null;}
+        void CloseDetails(){QuestBridgeBrowserText.CloseActive();editorOpen=false;editorGeneration++;if(!detailOverlay)return;detailOverlay.gameObject.SetActive(false);Destroy(detailOverlay.gameObject);detailOverlay=null;}
         void Notify(string message){activityText.text=message;toastText.text=message;toastUntil=Time.unscaledTime+3.7f;}
         void AddMessage(string message,bool user,bool animate=true)
         {
@@ -374,6 +379,7 @@ namespace QuestBridge
             bubble.pivot=new Vector2(.5f,1);
             var label=Text(bubble,message,0,0,1,1,18);label.rectTransform.offsetMin=new Vector2(16,14);label.rectTransform.offsetMax=new Vector2(-16,-14);
             label.verticalAlignment=VerticalAlignmentOptions.Top;label.overflowMode=TextOverflowModes.Overflow;
+            QuestBridgeBrowserText.AttachSelectable(label);
             var item=new ChatBubble{rect=bubble,label=label,user=user};chatBubbles.Add(item);ReflowChat();
             if(follow)
             {
@@ -524,12 +530,15 @@ namespace QuestBridge
             CloseDetails();ShowTeam(null,null,false);
             if(!demoLive)
             {
-                snapshotBeforeDemo=snapshot;filterBeforeDemo=filter;demoLive=true;demoTick=Time.unscaledTime+5;
-                SetButtonText(demoButton,"Выйти");Apply(Demo(),false);SetFilter("Все");DemoLeader();
+                snapshotBeforeDemo=snapshot;filterBeforeDemo=filter;mineBeforeDemo=mineOnly;readinessBeforeDemo=readinessFilter;
+                readinessCaptionBeforeDemo=readinessButton.GetComponentInChildren<TMP_Text>().text;
+                mineOnly=false;readinessFilter=0;SetButtonText(readinessButton,"Любая готовность");demoLive=true;demoTick=Time.unscaledTime+5;
+                SetButtonText(demoButton,"Выйти");Apply(Demo(),false);SetFilter("Все");UpdateScope();DemoLeader();
             }
             else
             {
-                demoLive=false;SetButtonText(demoButton,"Демо");Apply(lastServerSnapshot??snapshotBeforeDemo??Demo(),false);SetFilter(filterBeforeDemo);
+                demoLive=false;mineOnly=mineBeforeDemo;readinessFilter=readinessBeforeDemo;SetButtonText(readinessButton,readinessCaptionBeforeDemo);
+                SetButtonText(demoButton,"Демо");Apply(lastServerSnapshot??snapshotBeforeDemo??Demo(),false);SetFilter(filterBeforeDemo);UpdateScope();
                 connectionText.text=string.IsNullOrWhiteSpace(serverUrl)?"Офлайн-демо":onlineSnapshot?"Сервер подключён":"Подключение…";
             }
         }
