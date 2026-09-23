@@ -38,16 +38,21 @@ namespace QuestBridge
         void RefreshScoreForecast()
         {
             if(!scoreForecast)return;
-            if(latestPreview==null||latestPreviewRevision!=editorRevision){scoreForecast.text="Обновляем расчёт…";return;}
+            if(!ApprovedPreview()||latestPreview==null||latestPreviewRevision!=editorRevision)
+            {
+                scoreForecast.text=!ValidBaseUrl()?"Подключите сервер для проверки":previewError.Length>0?"Проверка не завершена":editorValidation?.status=="rejected"?"Исправьте отмеченные поля":editorValidation?.status=="unavailable"?"Проверка недоступна":"Проверяем содержание…";
+                if(confirmDraftButton)confirmDraftButton.interactable=false;
+                return;
+            }
             int delta=latestPreview.readiness-confirmedDisplayScore;
             scoreForecast.text=draftConfirmed?"Сведения подтверждены":delta>0?"После подтверждения: +"+delta:delta<0?"После подтверждения: "+latestPreview.readiness+" / 100":"Подтвердите заполненные поля";
-            confirmDraftButton.interactable=!publishing&&!draftConfirmed;
+            confirmDraftButton.interactable=!publishing&&!draftConfirmed&&ApprovedPreview();
         }
         void ConfirmDraftWithFeedback()
         {
             if(draftConfirmed||publishing)return;
-            if(latestPreview==null||latestPreviewRevision!=editorRevision)
-            {if(editorStatus)editorStatus.text="Дождитесь расчёта заполненных полей.";return;}
+            if(!ApprovedPreview()||latestPreview==null||latestPreviewRevision!=editorRevision)
+            {if(editorStatus)editorStatus.text="Подтверждение доступно после успешной проверки содержания.";return;}
             draftConfirmed=true;SetButtonText(confirmDraftButton,"Сведения подтверждены");
             confirmDraftButton.interactable=false;UpdatePublishButton();
             var gains=new List<ScoreRow>();

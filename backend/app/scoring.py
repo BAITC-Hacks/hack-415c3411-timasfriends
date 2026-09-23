@@ -1,10 +1,11 @@
-"""Deterministic completeness scoring; no AI opinions enter this formula."""
+"""Fixed completeness weights applied only to meaningful, confirmed fields."""
 
 import re
 import unicodedata
 from collections.abc import Iterable
 
-from .models import Draft, FieldName, PreviewResponse, ReadinessLevel, ScoreBreakdownItem
+from .models import ContentReview, Draft, FieldName, PreviewResponse, ReadinessLevel, ScoreBreakdownItem
+from .quality import local_draft_issues
 
 
 WEIGHTS: dict[FieldName, int] = {
@@ -60,6 +61,13 @@ _PLACEHOLDERS = {
     "none",
     "null",
     "undefined",
+    "білмеймін",
+    "әзірге білмеймін",
+    "белгісіз",
+    "мәлімет жоқ",
+    "деректер жоқ",
+    "көрсетілмеген",
+    "жоқ",
 }
 _PLACEHOLDER_PART = "(?:" + "|".join(
     re.escape(value) for value in sorted(_PLACEHOLDERS, key=len, reverse=True)
@@ -75,7 +83,8 @@ def is_filled(value: str) -> bool:
     """
     normalized = unicodedata.normalize("NFKC", value).casefold()
     normalized = "".join(
-        char for char in normalized if unicodedata.category(char) != "Cf"
+        " " if char.isspace() else char for char in normalized
+        if char.isspace() or not unicodedata.category(char).startswith("C")
     )
     normalized = re.sub(r"[\W_]+", " ", normalized, flags=re.UNICODE).strip()
     return bool(normalized) and _ONLY_PLACEHOLDERS.fullmatch(normalized) is None
@@ -91,15 +100,39 @@ def readiness_level(readiness: int) -> ReadinessLevel:
     return "priority"
 
 
-def score_draft(draft: Draft, confirmedFields: Iterable[FieldName]) -> PreviewResponse:
-    """Award the fixed weight only when a field is present and confirmed."""
+def score_draft(draft: Draft, confirmedFields: Iterable[FieldName],
+                validation: ContentReview | None = None) -> PreviewResponse:
+    """Validation gates eligibility; the field weights remain deterministic."""
+    local_issues = local_draft_issues(draft)
+    if validation is None:
+        validation = ContentReview(
+            status="rejected" if local_issues else "passed", aiMode="fallback",
+            issues=local_issues,
+            message="Исправьте отмеченные поля." if local_issues else
+                    "Выполнена локальная проверка; AI не подключён.",
+        )
+    else:
+        # Local rejection cannot be overridden by a provider's approval.
+        issues = {issue.field: issue for issue in validation.issues}
+        issues.update({issue.field: issue for issue in local_issues})
+        validation = validation.model_copy(update={
+            "issues": list(issues.values()),
+            "status": ("unavailable" if validation.status == "unavailable" else
+                       "rejected" if issues else validation.status),
+        })
+    invalid_fields = {issue.field for issue in validation.issues}
+    # Title/category are outside the weighted formula, but rejecting either
+    # makes the whole card ineligible for a readiness score until corrected.
+    invalid_identity = bool(invalid_fields - WEIGHTS.keys())
     confirmed_fields = set(confirmedFields)
     breakdown: list[ScoreBreakdownItem] = []
     missing: list[FieldName] = []
     for field, weight in WEIGHTS.items():
         filled = is_filled(getattr(draft, field))
         confirmed = field in confirmed_fields
-        points = weight if filled and confirmed else 0
+        eligible = (not invalid_identity and field not in invalid_fields and validation.status != "unavailable"
+                    and not (validation.status == "rejected" and not invalid_fields))
+        points = weight if filled and confirmed and eligible else 0
         breakdown.append(
             ScoreBreakdownItem(
                 field=field,
@@ -118,4 +151,5 @@ def score_draft(draft: Draft, confirmedFields: Iterable[FieldName]) -> PreviewRe
         scoreBreakdown=breakdown,
         missingFields=missing,
         readinessLevel=readiness_level(readiness),
+        validation=validation,
     )

@@ -7,15 +7,19 @@ publication tools, or ability to select a team.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
+import hashlib
 import json
 import re
 from pathlib import Path
+from time import monotonic
 from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .models import ChatResponse, Draft, FieldSource, Question
+from .models import ChatResponse, ContentIssue, ContentReview, Draft, FieldSource, Question
+from .quality import local_draft_issues, local_message_issues
 from .scoring import is_filled
 
 
@@ -77,6 +81,9 @@ class _ChatOutput(BaseModel):
     questions: list[Question] = Field(max_length=1)
     draft: Draft
     sources: list[FieldSource] = Field(max_length=24)
+    inputAccepted: bool = Field(strict=True)
+    inputFeedback: str = Field(max_length=2000)
+    issues: list[ContentIssue] = Field(max_length=12)
 
     @model_validator(mode="before")
     @classmethod
@@ -92,6 +99,14 @@ class _ClarityOutput(BaseModel):
 
     clarity: float = Field(ge=0, le=10, allow_inf_nan=False)
     clarityReason: str = Field(min_length=1, max_length=1000)
+
+
+class _ReviewOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    accepted: bool = Field(strict=True)
+    issues: list[ContentIssue] = Field(max_length=12)
+    message: str = Field(min_length=1, max_length=2000)
 
 
 class AIProvider(Protocol):
@@ -163,8 +178,21 @@ def _bounded(field: str, value: str) -> str:
     return value.strip()[:max_length].rstrip()
 
 
+def _accepted_history(history: list[dict]) -> list[dict]:
+    """Rejected input stays in storage but cannot become facts or consume a turn."""
+    accepted = []
+    rejected_turn = False
+    for message in history:
+        if message.get("role") == "user":
+            rejected_turn = message.get("inputAccepted") is False
+        if message.get("inputAccepted") is False or rejected_turn:
+            continue
+        accepted.append(message)
+    return accepted
+
+
 def _user_messages(history: list[dict]) -> list[dict]:
-    return [message for message in history if message.get("role") == "user"]
+    return [message for message in _accepted_history(history) if message.get("role") == "user"]
 
 
 def _source_valid(source: FieldSource, users: dict[str, str], value: str) -> bool:
@@ -177,7 +205,7 @@ def _source_valid(source: FieldSource, users: dict[str, str], value: str) -> boo
 def _initial_question_fields(history: list[dict]) -> dict[int, str]:
     """Map answer numbers only when the stored assistant asked known questions."""
     first_user_seen = False
-    for message in history:
+    for message in _accepted_history(history):
         if message.get("role") == "user":
             if first_user_seen:
                 break
@@ -202,6 +230,7 @@ def _stored_questions(message: dict) -> list[dict]:
 
 def _question_flow(history: list[dict], draft: Draft) -> tuple[Question | None, int]:
     """The server owns the three question turns, including across restarts."""
+    history = _accepted_history(history)
     assistants = [message for message in history if message.get("role") == "assistant"]
     recorded = [message for message in assistants if "questions" in message or "phase" in message]
     asked_fields = []
@@ -244,7 +273,7 @@ def _answer_fields(history: list[dict]) -> dict[str, str]:
     """A plain answer belongs only to the immediately preceding single question."""
     fields = {}
     pending_field = None
-    for message in history:
+    for message in _accepted_history(history):
         if message.get("role") == "assistant":
             questions = _stored_questions(message)
             pending_field = (questions[0]["field"]
@@ -269,6 +298,7 @@ def _chat_message(question: Question | None, number: int, missing: list[str]) ->
 
 def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> tuple[Draft, list[FieldSource]]:
     """Only copy literal user text; an unknown reply never erases known facts."""
+    history = _accepted_history(history)
     values = draft.model_dump()
     user_messages = _user_messages(history)
     initial_questions = _initial_question_fields(history)
@@ -336,6 +366,60 @@ def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> t
     return Draft.model_validate(values), list(provenance.values())
 
 
+def _pending_question(history: list[dict]) -> Question | None:
+    for message in reversed(_accepted_history(history)):
+        if message.get("role") == "assistant":
+            questions = _stored_questions(message)
+            if message.get("phase") == "clarifying" and len(questions) == 1:
+                return Question.model_validate(questions[0])
+            return None
+    return None
+
+
+def _input_issues(content: str, field: str) -> list[ContentIssue]:
+    labelled = [(ALIASES[match.group(1).strip().casefold()], match.group(2))
+                for match in LABEL_RE.finditer(content)
+                if match.group(1).strip().casefold() in ALIASES]
+    if labelled:
+        issues = local_message_issues(content, field)
+        issues.extend(issue for name, value in labelled for issue in local_message_issues(value, name))
+    else:
+        issues = local_message_issues(content, field)
+    if INSTRUCTION_RE.search(content):
+        issues.append(ContentIssue(field=field, code="instructions_instead_of_task",
+                                   message="Опишите задачу или ответьте на вопрос, не меняя правила работы помощника."))
+    return _merge_issues(issues)
+
+
+def _merge_issues(*groups: list[ContentIssue]) -> list[ContentIssue]:
+    unique = {}
+    for group in groups:
+        for issue in group:
+            unique.setdefault((issue.field, issue.code), issue)
+    return list(unique.values())[:12]
+
+
+def _reject_chat(conversation_id: str, history: list[dict], draft: Draft,
+                 sources: list[FieldSource], issues: list[ContentIssue], mode: str,
+                 feedback: str = "") -> ChatResponse:
+    question = _pending_question(history)
+    if not _user_messages(history):
+        question = Question(id="q-problem", field="context", text="Какую конкретную проблему бизнеса нужно решить?")
+    feedback = feedback.strip() or (issues[0].message if issues else "Напишите понятное описание или ответ на текущий вопрос.")
+    # Provider feedback cannot sneak another question into the visible chat turn.
+    message = feedback.replace("?", ".").replace("？", ".")[:500].rstrip() + " Исправьте ответ."
+    if question is not None:
+        message += " " + question.text
+    return ChatResponse(
+        conversationId=conversation_id, message=message,
+        phase="clarifying" if question is not None else "draft_ready", aiMode=mode,
+        questions=[question] if question is not None else [], draft=draft, sources=sources,
+        missingFields=[field for field in FIELD_NAMES if not is_filled(getattr(draft, field))],
+        inputAccepted=False,
+        validation=ContentReview(status="rejected", aiMode=mode, issues=issues, message=feedback),
+    )
+
+
 class FallbackProvider:
     def chat(self, conversation_id: str, history: list[dict], draft: Draft,
              sources: list[FieldSource]) -> ChatResponse:
@@ -361,14 +445,30 @@ class AIService:
             if api_key and model else None
         )
         self._fallback = FallbackProvider()
+        self._review_cache: OrderedDict[str, tuple[float, ContentReview]] = OrderedDict()
+        self._review_inflight: dict[tuple[int, str], asyncio.Task] = {}
 
     async def chat(self, conversation_id: str, history: list[dict], draft: Draft,
                    sources: list[FieldSource]) -> ChatResponse:
+        history = _accepted_history(history)
+        previous_history = history[:-1]
+        previous, previous_sources = _extract(previous_history, draft, sources)
+        pending = _pending_question(previous_history)
+        input_field = pending.field if pending is not None else "context"
+        local_issues = _input_issues(history[-1]["content"], input_field)
+        if not _user_messages(previous_history) and not is_filled(history[-1]["content"]):
+            local_issues = _merge_issues(local_issues, [ContentIssue(
+                field="context", code="problem_required", message="Сначала опишите, что сейчас не получается и кому это мешает.")])
+        if local_issues:
+            return _reject_chat(conversation_id, previous_history, previous, previous_sources, local_issues, "fallback")
         base, base_sources = _extract(history, draft, sources)
         question, number = _question_flow(history, base)
         if self._provider is not None:
             payload = {"history": history, "knownDraft": base.model_dump(),
                        "knownSources": [source.model_dump() for source in base_sources],
+                       "previousDraft": previous.model_dump(),
+                       "latestMessageId": history[-1]["id"], "inputField": input_field,
+                       "currentQuestion": pending.model_dump() if pending is not None else None,
                        "expectedPhase": "clarifying" if question is not None else "draft_ready",
                        "nextQuestion": question.model_dump() if question is not None else None,
                        "questionNumber": number}
@@ -377,14 +477,44 @@ class AIService:
                     text = await asyncio.wait_for(self._provider.generate("chat", payload, repair=attempt > 0),
                                                   timeout=self._timeout)
                     candidate = _ChatOutput.model_validate_json(text, strict=True)
-                    return self._validate_chat(candidate, conversation_id, history, base, base_sources)
+                    if not candidate.inputAccepted:
+                        if not candidate.inputFeedback.strip():
+                            raise ValueError("Rejected input requires correction feedback")
+                        issues = candidate.issues or [ContentIssue(
+                            field=input_field, code="unclear_input", message=candidate.inputFeedback)]
+                        return _reject_chat(conversation_id, previous_history, previous, previous_sources,
+                                            issues, "live", candidate.inputFeedback)
+                    if candidate.issues:
+                        raise ValueError("Accepted input cannot have unresolved issues")
+                    response = self._validate_chat(candidate, conversation_id, history, base, base_sources)
+                    changed_issues = [issue for issue in local_draft_issues(response.draft)
+                                      if getattr(response.draft, issue.field) != getattr(previous, issue.field)]
+                    if changed_issues:
+                        return _reject_chat(conversation_id, previous_history, previous, previous_sources,
+                                            changed_issues, "fallback")
+                    return response
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code < 500 and exc.response.status_code != 429:
                         break
                 except (httpx.RequestError, TimeoutError, ValidationError, ValueError, TypeError, KeyError):
                     # No provider errors, request bodies, secrets, or generated content enter logs.
                     pass
-        return self._fallback.chat(conversation_id, history, base, base_sources)
+        response = self._fallback.chat(conversation_id, history, base, base_sources)
+        changed_issues = [issue for issue in local_draft_issues(response.draft)
+                          if getattr(response.draft, issue.field) != getattr(previous, issue.field)]
+        if changed_issues:
+            return _reject_chat(conversation_id, previous_history, previous, previous_sources,
+                                changed_issues, "fallback")
+        unavailable = self._provider is not None
+        validation = ContentReview(
+            status="unavailable" if unavailable else "passed", aiMode="fallback", issues=[],
+            message=("AI-проверка сейчас недоступна. Ответ сохранён после локальной проверки."
+                     if unavailable else "Выполнена локальная проверка; AI не подключён."),
+        )
+        return response.model_copy(update={
+            "inputAccepted": True, "validation": validation,
+            "message": ("AI-проверка сейчас недоступна. " if unavailable else "") + response.message,
+        })
 
     @staticmethod
     def _validate_chat(candidate: _ChatOutput, conversation_id: str, history: list[dict],
@@ -428,7 +558,81 @@ class AIService:
         return ChatResponse(conversationId=conversation_id, message=_chat_message(question, number, missing),
                             phase=candidate.phase, aiMode="live", questions=[question] if question is not None else [],
                             draft=merged,
-                            sources=list(provenance.values()), missingFields=missing)
+                            sources=list(provenance.values()), missingFields=missing, inputAccepted=True,
+                            validation=ContentReview(status="passed", aiMode="live", issues=[],
+                                                     message="AI проверил осмысленность ответа и его связь с текущим вопросом."))
+
+    async def review(self, draft: Draft) -> ContentReview:
+        """Content-based, bounded cache shared by editor previews and publication."""
+        for inflight_key, existing in list(self._review_inflight.items()):
+            if existing.done() or existing.get_loop().is_closed():
+                self._review_inflight.pop(inflight_key, None)
+        fingerprint = hashlib.sha256(json.dumps(draft.model_dump(), ensure_ascii=False,
+                                               sort_keys=True).encode("utf-8")).hexdigest()
+        cached = self._review_cache.get(fingerprint)
+        if cached is not None:
+            if monotonic() - cached[0] < 60:
+                self._review_cache.move_to_end(fingerprint)
+                return cached[1].model_copy(deep=True)
+            self._review_cache.pop(fingerprint, None)
+        key = (id(asyncio.get_running_loop()), fingerprint)
+        task = self._review_inflight.get(key)
+        if task is None:
+            if len(self._review_inflight) >= 128:
+                issues = local_draft_issues(draft)
+                return ContentReview(status="rejected" if issues else "unavailable", aiMode="fallback",
+                                     issues=issues, message="Проверка занята. Повторите запрос через несколько секунд.")
+            task = asyncio.create_task(self._review_and_cache(key, fingerprint, draft.model_copy(deep=True)))
+            self._review_inflight[key] = task
+        result = await asyncio.shield(task)
+        return result.model_copy(deep=True)
+
+    async def _review_and_cache(self, key: tuple[int, str], fingerprint: str, draft: Draft) -> ContentReview:
+        try:
+            result = await self._review_draft(draft)
+            if result.status != "unavailable":
+                self._review_cache[fingerprint] = (monotonic(), result)
+                self._review_cache.move_to_end(fingerprint)
+                while len(self._review_cache) > 128:
+                    self._review_cache.popitem(last=False)
+            return result
+        finally:
+            self._review_inflight.pop(key, None)
+
+    async def _review_draft(self, draft: Draft) -> ContentReview:
+        local_issues = local_draft_issues(draft)
+        if local_issues:
+            return ContentReview(status="rejected", aiMode="fallback", issues=local_issues,
+                                 message="Исправьте отмеченные поля: локальная проверка обнаружила бессвязный текст.")
+        if self._provider is None:
+            return ContentReview(
+                status="passed", aiMode="fallback", issues=[],
+                message="Выполнена локальная проверка; AI не подключён.",
+            )
+        for attempt in range(2):
+            try:
+                text = await asyncio.wait_for(self._provider.generate(
+                    "review", {"draft": draft.model_dump()}, repair=attempt > 0), timeout=self._timeout)
+                candidate = _ReviewOutput.model_validate_json(text, strict=True)
+                if candidate.accepted != (not candidate.issues):
+                    raise ValueError("Rejected reviews require field issues; accepted reviews require none")
+                if not candidate.message.strip() or any(
+                    not is_filled(getattr(draft, issue.field)) for issue in candidate.issues
+                ):
+                    raise ValueError("Review must assess only filled fields")
+                issues = _merge_issues(local_issues, candidate.issues)
+                return ContentReview(status="rejected" if issues else "passed", aiMode="live",
+                                     issues=issues, message=("Исправьте отмеченные поля." if local_issues and not candidate.issues
+                                                             else candidate.message))
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500 and exc.response.status_code != 429:
+                    break
+            except (httpx.RequestError, TimeoutError, ValidationError, ValueError, TypeError, KeyError):
+                pass
+        return ContentReview(
+            status="unavailable", aiMode="fallback", issues=[],
+            message="AI-проверка сейчас недоступна. Повторите проверку перед публикацией.",
+        )
 
     async def clarity(self, draft: Draft) -> ClarityResult:
         if self._provider is not None:

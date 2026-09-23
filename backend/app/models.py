@@ -119,6 +119,19 @@ class Draft(APIModel):
     feedbackProcess: ShortText = ""
 
 
+class ContentIssue(APIModel):
+    field: FieldName
+    code: Annotated[str, StringConstraints(min_length=1, max_length=80, pattern=r"^[a-z_]+$")]
+    message: RequiredText
+
+
+class ContentReview(APIModel):
+    status: Literal["passed", "rejected", "unavailable"] = "unavailable"
+    aiMode: AIMode = "fallback"
+    issues: Annotated[list[ContentIssue], Field(max_length=12)] = Field(default_factory=list)
+    message: RequiredText = "Содержательность ещё не проверена."
+
+
 class ScoreBreakdownItem(APIModel):
     field: FieldName
     maxPoints: Annotated[int, Field(strict=True, ge=0, le=100)]
@@ -137,6 +150,7 @@ class PreviewResponse(APIModel):
     scoreBreakdown: Annotated[list[ScoreBreakdownItem], Field(min_length=10, max_length=10)]
     missingFields: FieldNames
     readinessLevel: ReadinessLevel
+    validation: ContentReview = Field(default_factory=ContentReview)
 
 
 class Question(APIModel):
@@ -167,6 +181,8 @@ class ChatResponse(APIModel):
     draft: Draft | None
     sources: Annotated[list[FieldSource], Field(max_length=120)] = Field(default_factory=list)
     missingFields: FieldNames = Field(default_factory=list)
+    inputAccepted: StrictBool = True
+    validation: ContentReview = Field(default_factory=ContentReview)
 
 
 class PublishTaskRequest(APIModel):

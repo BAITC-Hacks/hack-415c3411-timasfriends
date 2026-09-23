@@ -3,6 +3,9 @@
   "properties": {
     "message": {"type": "string", "minLength": 1, "maxLength": 6000},
     "phase": {"type": "string", "enum": ["clarifying", "draft_ready"]},
+    "inputAccepted": {"type": "boolean"},
+    "inputFeedback": {"type": "string", "maxLength": 2000},
+    "issues": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/contentIssue"}},
     "questions": {
       "type": "array", "maxItems": 1,
       "items": {
@@ -29,9 +32,18 @@
       }
     }
   },
-  "required": ["message", "phase", "questions", "draft", "sources"],
+  "required": ["message", "phase", "questions", "draft", "sources", "inputAccepted", "inputFeedback", "issues"],
   "additionalProperties": false,
   "$defs": {
+    "contentIssue": {
+      "type": "object",
+      "properties": {
+        "field": {"$ref": "#/$defs/fieldName"},
+        "code": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z_]+$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000}
+      },
+      "required": ["field", "code", "message"], "additionalProperties": false
+    },
     "fieldName": {"type": "string", "enum": ["title", "category", "context", "need", "users", "data", "constraints", "expectedResult", "successCriteria", "contact", "interactionFormat", "feedbackProcess"]},
     "draft": {
       "type": "object",
