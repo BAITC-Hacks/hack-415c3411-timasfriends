@@ -236,9 +236,11 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
         history.append({"id": new_id("msg"), "role": "user", "content": body.message})
         response = await ai.chat(conversation_id=conversation_id, history=history, draft=draft, sources=sources)
         response = ChatResponse.model_validate(response)
-        history.append({"id": new_id("msg"), "role": "assistant", "content": response.message})
-        # A first clarifying answer may intentionally keep draft:null. The provider
-        # can reconstruct its known fields from the complete server-side history.
+        history.append({"id": new_id("msg"), "role": "assistant", "content": response.message,
+                        "phase": response.phase,
+                        "questions": [question.model_dump() for question in response.questions]})
+        # Persist the current question together with each answer and partial draft.
+        # This keeps the next step and plain-answer mapping stable after restart.
         stored_draft = response.draft if response.draft is not None else draft
         stored_sources = response.sources if response.draft is not None else sources
         with db.write() as conn:

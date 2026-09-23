@@ -25,7 +25,9 @@ def main():
     health = call("GET", "/health")
     catalog_before = call("GET", "/api/catalog")
     chat = call("POST", "/api/chat", {"conversationId": "", "message": "Учителя долго проверяют пробные SAT"})
-    ready = call("POST", "/api/chat", {"conversationId": chat["conversationId"], "message": "Не знаю"})
+    ready = chat
+    for _ in range(3):
+        ready = call("POST", "/api/chat", {"conversationId": chat["conversationId"], "message": "Не знаю"})
     sample = json.loads(Path(__file__).with_name("demo_drafts.json").read_text(encoding="utf-8"))["drafts"][4]
     sample["title"] = "ДЕМО: проверка полного сценария API"
     body = {"businessId": "business-demo", "draft": sample, "confirmedFields": ["context"], "confirmed": True}

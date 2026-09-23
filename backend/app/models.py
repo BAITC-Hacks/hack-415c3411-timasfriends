@@ -163,7 +163,7 @@ class ChatResponse(APIModel):
     message: Annotated[str, StringConstraints(min_length=1, max_length=10000)]
     phase: Literal["clarifying", "draft_ready"]
     aiMode: AIMode
-    questions: Annotated[list[Question], Field(max_length=12)]
+    questions: Annotated[list[Question], Field(max_length=1)]
     draft: Draft | None
     sources: Annotated[list[FieldSource], Field(max_length=120)] = Field(default_factory=list)
     missingFields: FieldNames = Field(default_factory=list)

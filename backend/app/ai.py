@@ -74,8 +74,8 @@ class _ChatOutput(BaseModel):
 
     message: str = Field(min_length=1, max_length=6000)
     phase: Literal["clarifying", "draft_ready"]
-    questions: list[Question] = Field(max_length=12)
-    draft: Draft | None
+    questions: list[Question] = Field(max_length=1)
+    draft: Draft
     sources: list[FieldSource] = Field(max_length=24)
 
     @model_validator(mode="before")
@@ -192,21 +192,101 @@ def _initial_question_fields(history: list[dict]) -> dict[int, str]:
     return {}
 
 
+def _stored_questions(message: dict) -> list[dict]:
+    questions = message.get("questions", [])
+    if not isinstance(questions, list):
+        return []
+    return [question for question in questions if isinstance(question, dict)
+            and question.get("field") in QUESTION_TEXT]
+
+
+def _question_flow(history: list[dict], draft: Draft) -> tuple[Question | None, int]:
+    """The server owns the three question turns, including across restarts."""
+    assistants = [message for message in history if message.get("role") == "assistant"]
+    recorded = [message for message in assistants if "questions" in message or "phase" in message]
+    asked_fields = []
+    if recorded:
+        if any(message.get("phase") == "draft_ready" for message in recorded):
+            return None, 0
+        # Preserve steps from before this conversation started storing metadata.
+        legacy_history = history[:history.index(recorded[0])]
+        completed = min(max(len(_user_messages(legacy_history)) - 1, 0), 3)
+        legacy_fields = list(_initial_question_fields(legacy_history).values()) or list(QUESTION_TEXT)
+        asked_fields = legacy_fields[:completed]
+        for message in recorded:
+            for question in _stored_questions(message):
+                if question["field"] not in asked_fields:
+                    asked_fields.append(question["field"])
+                # The ordinal also preserves progress when an old conversation
+                # starts recording question metadata midway through its flow.
+                ordinal = re.fullmatch(r"q-([1-3])-[A-Za-z]+", str(question.get("id", "")))
+                if ordinal:
+                    completed = max(completed, int(ordinal.group(1)))
+        completed = max(completed, len(asked_fields))
+    else:
+        # Old rows contain only role/content. Do not restart their questionnaire.
+        completed = min(max(len(_user_messages(history)) - 1, 0), 3)
+        legacy_fields = list(_initial_question_fields(history).values())
+        inferred = legacy_fields or list(QUESTION_TEXT)
+        asked_fields = inferred[:completed]
+    if completed >= 3:
+        return None, 0
+    available = [field for field in QUESTION_TEXT if field not in asked_fields]
+    field = next((field for field in available if not is_filled(getattr(draft, field))), available[0])
+    number = completed + 1
+    text = QUESTION_TEXT[field]
+    if is_filled(getattr(draft, field)):
+        text = f"Подтверждаете значение поля «{FIELD_LABELS[field]}» в черновике?"
+    return Question(id=f"q-{number}-{field}", field=field, text=text), number
+
+
+def _answer_fields(history: list[dict]) -> dict[str, str]:
+    """A plain answer belongs only to the immediately preceding single question."""
+    fields = {}
+    pending_field = None
+    for message in history:
+        if message.get("role") == "assistant":
+            questions = _stored_questions(message)
+            pending_field = (questions[0]["field"]
+                             if message.get("phase") == "clarifying" and len(questions) == 1 else None)
+        elif message.get("role") == "user":
+            if pending_field is not None:
+                fields[message["id"]] = pending_field
+            pending_field = None
+    return fields
+
+
+def _chat_message(question: Question | None, number: int, missing: list[str]) -> str:
+    if question is not None:
+        return f"Вопрос {number} из 3. {question.text}"
+    message = "Ответ сохранён. Черновик готов, задача ещё не опубликована."
+    if missing:
+        message += " Неизвестные поля оставлены пустыми. Дополните сведения и проверьте карточку перед публикацией."
+    else:
+        message += " Проверьте данные перед публикацией."
+    return message
+
+
 def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> tuple[Draft, list[FieldSource]]:
     """Only copy literal user text; an unknown reply never erases known facts."""
     values = draft.model_dump()
     user_messages = _user_messages(history)
     initial_questions = _initial_question_fields(history)
+    answer_fields = _answer_fields(history)
     users = {message["id"]: message["content"] for message in user_messages}
     positions = {message["id"]: index for index, message in enumerate(user_messages)}
     provenance = {source.field: source for source in sources
                   if source.field in values and is_filled(values[source.field])
                   and _source_valid(source, users, values[source.field])}
 
-    def assign(field: str, value: str, message: dict) -> None:
+    def assign(field: str, value: str, message: dict, *, implicit: bool = False) -> None:
         value = _bounded(field, value)
         previous = provenance.get(field)
         if previous and positions[previous.messageId] > positions[message["id"]]:
+            return
+        if implicit and previous and previous.messageId == message["id"]:
+            # Replaying a plain answer must not replace an already sourced,
+            # more precise live extraction from that very same answer.
             return
         if is_filled(value) and not INSTRUCTION_RE.search(value):
             values[field] = value
@@ -232,6 +312,16 @@ def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> t
                 field = initial_questions.get(int(match.group(1)))
                 if field:
                     assign(field, match.group(2), message)
+        answer_field = answer_fields.get(message["id"])
+        has_labels = any(match.group(1).strip().casefold() in ALIASES for match in labelled)
+        if answer_field and not has_labels and not INSTRUCTION_RE.search(content):
+            numbered = list(NUMBERED_LINE_RE.finditer(content))
+            answer = numbered[0].group(2) if len(numbered) == 1 else content
+            confirmation = answer.strip().casefold().rstrip(".! ") in {
+                "да", "верно", "всё верно", "все верно", "да верно", "подтверждаю", "без изменений",
+            }
+            if len(numbered) <= 1 and not (confirmation and is_filled(values[answer_field])):
+                assign(answer_field, answer, message, implicit=True)
         for match in labelled:
             field = ALIASES.get(match.group(1).strip().casefold())
             if field and not INSTRUCTION_RE.search(content):
@@ -251,27 +341,10 @@ class FallbackProvider:
              sources: list[FieldSource]) -> ChatResponse:
         draft, sources = _extract(history, draft, sources)
         missing = [field for field in FIELD_NAMES if not is_filled(getattr(draft, field))]
-        first_turn = len(_user_messages(history)) <= 1
-        if first_turn and missing:
-            fields = [field for field in QUESTION_TEXT if field in missing][:3]
-            questions = [Question(id=f"q-{field}", field=field, text=QUESTION_TEXT[field]) for field in fields]
-            context = draft.context.strip()
-            intro = (f"Уточним задачу «{context}»." if context and len(context) <= 72
-                     else "Уточним несколько деталей задачи.")
-            numbered = "\n".join(f"{index}. {question.text}"
-                                 for index, question in enumerate(questions, 1))
-            answer_format = "\n".join(f"{FIELD_LABELS[field].capitalize()}: …" for field in fields)
-            message = f"{intro}\n\n{numbered}\n\nОтветьте по номерам или укажите поля:\n{answer_format}"
-            return ChatResponse(conversationId=conversation_id, message=message,
-                                phase="clarifying", aiMode="fallback", questions=questions,
-                                draft=None, sources=sources, missingFields=missing)
-        message = "Сообщение сохранено. Черновик готов, задача ещё не опубликована."
-        if missing:
-            message += " Неизвестные поля оставлены пустыми. Дополнить сведения можно в любой момент."
-        else:
-            message += " Проверьте данные перед публикацией."
-        return ChatResponse(conversationId=conversation_id, message=message,
-                            phase="draft_ready", aiMode="fallback", questions=[],
+        question, number = _question_flow(history, draft)
+        return ChatResponse(conversationId=conversation_id, message=_chat_message(question, number, missing),
+                            phase="clarifying" if question is not None else "draft_ready", aiMode="fallback",
+                            questions=[question] if question is not None else [],
                             draft=draft, sources=sources, missingFields=missing)
 
     def clarity(self) -> ClarityResult:
@@ -292,10 +365,13 @@ class AIService:
     async def chat(self, conversation_id: str, history: list[dict], draft: Draft,
                    sources: list[FieldSource]) -> ChatResponse:
         base, base_sources = _extract(history, draft, sources)
+        question, number = _question_flow(history, base)
         if self._provider is not None:
             payload = {"history": history, "knownDraft": base.model_dump(),
                        "knownSources": [source.model_dump() for source in base_sources],
-                       "firstUserTurn": len(_user_messages(history)) <= 1}
+                       "expectedPhase": "clarifying" if question is not None else "draft_ready",
+                       "nextQuestion": question.model_dump() if question is not None else None,
+                       "questionNumber": number}
             for attempt in range(2):
                 try:
                     text = await asyncio.wait_for(self._provider.generate("chat", payload, repair=attempt > 0),
@@ -342,23 +418,16 @@ class AIService:
             provenance[field] = source
         merged = Draft.model_validate(values)
         missing = [field for field in FIELD_NAMES if not is_filled(values[field])]
-        first_turn = len(user_messages) <= 1
-        if first_turn and missing:
-            if candidate.phase != "clarifying":
-                raise ValueError("Missing first clarification")
-            fields = [question.field for question in candidate.questions]
-            if (len(fields) < min(3, len(missing)) or len(fields) != len(set(fields))
-                    or any(field not in missing for field in fields)
-                    or len({q.text.strip().casefold() for q in candidate.questions}) != len(fields)
-                    or any(not q.text.strip() for q in candidate.questions)):
-                raise ValueError("Insufficient distinct questions about missing fields")
-        elif candidate.phase != "draft_ready" or candidate.draft is None or candidate.questions:
-            raise ValueError("A follow-up must return an editable draft")
-        if candidate.phase == "draft_ready" and candidate.draft is None:
-            raise ValueError("Missing editable draft")
-        return ChatResponse(conversationId=conversation_id, message=candidate.message,
-                            phase=candidate.phase, aiMode="live", questions=candidate.questions,
-                            draft=merged if candidate.draft is not None else None,
+        question, number = _question_flow(history, base)
+        if question is not None:
+            if (candidate.phase != "clarifying" or len(candidate.questions) != 1
+                    or candidate.questions[0].field != question.field):
+                raise ValueError("Return only the server-selected question for this turn")
+        elif candidate.phase != "draft_ready" or candidate.questions:
+            raise ValueError("The third answer must produce a draft without another question")
+        return ChatResponse(conversationId=conversation_id, message=_chat_message(question, number, missing),
+                            phase=candidate.phase, aiMode="live", questions=[question] if question is not None else [],
+                            draft=merged,
                             sources=list(provenance.values()), missingFields=missing)
 
     async def clarity(self, draft: Draft) -> ClarityResult:

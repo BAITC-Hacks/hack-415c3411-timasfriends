@@ -49,7 +49,7 @@ namespace QuestBridge
             if(url.Length>0&&(!Uri.TryCreate(url,UriKind.Absolute,out var parsed)||(parsed.Scheme!="http"&&parsed.Scheme!="https")))
             { if(root)Notify("Некорректный адрес сервера");return; }
             if(serverUrl==url)return;
-            serverUrl=url;onlineSnapshot=false;lastServerSnapshot=null;conversationId="";catalogVersion=-1;currentDraftTask=null;
+            serverUrl=url;onlineSnapshot=false;lastServerSnapshot=null;conversationId="";offlineMessages=0;catalogVersion=-1;currentDraftTask=null;
             if(root){connectionText.text=url.Length==0?"Офлайн-демо":"Подключение…";StartCoroutine(RefreshCatalog());}
         }
         void InitializeWorkflow()
@@ -75,6 +75,11 @@ namespace QuestBridge
             teamNavigation.transform.parent.gameObject.SetActive(false);
             try{var saved=PlayerPrefs.GetString("QuestBridge.LocalDraft","");if(saved.Length>0)currentDraft=JsonUtility.FromJson<DraftData>(saved)??new DraftData();}catch(ArgumentException){currentDraft=new DraftData();}
             foreach(var key in PlayerPrefs.GetString("QuestBridge.ManualFields","").Split(','))if(DraftFields.Contains(key))manualDraftFields.Add(key);
+            offlineMessages=Mathf.Clamp(PlayerPrefs.GetInt("QuestBridge.OfflineMessages",0),0,OfflineQuestions.Length+1);
+            if(string.IsNullOrWhiteSpace(serverUrl)&&offlineMessages>0)
+            {
+                chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;ShowOfflineQuestion();
+            }
             activeTeamId=PlayerPrefs.GetString("QuestBridge.Team","team-1");
             ShowRoleChoice();
         }
@@ -131,7 +136,7 @@ namespace QuestBridge
             return readiness&&scope;
         }
         static string ReadinessName(int score)=>score<40?"Черновик":score<70?"Рабочая":score<90?"Готовая":"Приоритетная";
-        void SaveDraft(){PlayerPrefs.SetString("QuestBridge.LocalDraft",JsonUtility.ToJson(currentDraft));PlayerPrefs.SetString("QuestBridge.ManualFields",string.Join(",",manualDraftFields));}
+        void SaveDraft(){PlayerPrefs.SetString("QuestBridge.LocalDraft",JsonUtility.ToJson(currentDraft));PlayerPrefs.SetString("QuestBridge.ManualFields",string.Join(",",manualDraftFields));PlayerPrefs.SetInt("QuestBridge.OfflineMessages",offlineMessages);}
         void AcceptDraft(ChatReply reply)
         {
             if(reply.draft!=null){foreach(var key in manualDraftFields)SetDraftValue(reply.draft,key,DraftValue(currentDraft,key));currentDraft=reply.draft;SaveDraft();}

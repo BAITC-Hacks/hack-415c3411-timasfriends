@@ -22,18 +22,18 @@ from backend.app.scoring import is_filled
 
 FIRST_MESSAGE = (
     "В вымышленном учебном центре «Орбита» преподаватели вручную проверяют "
-    "пробные SAT и тратят много времени."
+    "пробные SAT и тратят много времени.\n"
+    "название: ДЕМО: Помощник проверки SAT\nкатегория: Образование\n"
+    "потребность: сократить время ручной проверки\n"
+    "ожидаемый результат: браузерный прототип загрузки работ и таблица оценок "
+    "с возможностью исправления преподавателем\n"
+    "ограничения: только синтетические данные, окончательную оценку подтверждает преподаватель\n"
+    "контакт: не знаю\nформат взаимодействия: не знаю\nобратная связь: не знаю"
 )
-SECOND_MESSAGE = (
-    "Назовём задачу «ДЕМО: Помощник проверки SAT». Категория — Образование. "
-    "Пользоваться будут преподаватели учебного центра «Орбита». "
-    "Нам нужно сократить время ручной проверки. Для работы доступны "
-    "30 синтетических работ с ответами и эталонами. Команда должна передать "
-    "браузерный прототип загрузки работ и таблица оценок с возможностью "
-    "исправления преподавателем. Критерий успеха: не менее 27 из 30 оценок "
-    "совпадают с эталоном. Ограничения: только синтетические данные; "
-    "окончательную оценку подтверждает преподаватель. Контакт пока неизвестен. "
-    "Формат взаимодействия неизвестен. Процесс обратной связи пока неизвестен."
+ANSWERS = (
+    "преподаватели учебного центра «Орбита»",
+    "30 синтетических работ с ответами и эталонами",
+    "не менее 27 из 30 оценок совпадают с эталоном",
 )
 CONFIRMED_FIELDS = [
     "context", "need", "users", "data", "constraints", "expectedResult", "successCriteria",
@@ -54,7 +54,7 @@ def main() -> int:
         "configuredTimeoutSeconds": settings.ai_timeout, "database": settings.db_path,
         "reasoningEffort": settings.ai_reasoning_effort or "provider default",
         "transport": "FastAPI TestClient; real external AI HTTP requests",
-        "inputs": [FIRST_MESSAGE, SECOND_MESSAGE], "aiModeByStage": {}, "steps": [], "checks": [],
+        "inputs": [FIRST_MESSAGE, *ANSWERS], "aiModeByStage": {}, "steps": [], "checks": [],
     }
 
     def safe(value):
@@ -108,12 +108,15 @@ def main() -> int:
             initial = call(client, "initial catalog", "GET", "/api/catalog")
             first = call(client, "first chat", "POST", "/api/chat", {"message": FIRST_MESSAGE})
             live("firstChat", first)
-            check("first chat asks at least three distinct questions", first["phase"] == "clarifying"
-                  and len({q["field"] for q in first["questions"]}) >= 3)
-            ready = call(client, "second chat", "POST", "/api/chat", {
-                "conversationId": first["conversationId"], "message": SECOND_MESSAGE,
-            })
-            live("secondChat", ready)
+            ready = first
+            for number, answer in enumerate(ANSWERS, 1):
+                check(f"question {number} is asked alone", ready["phase"] == "clarifying"
+                      and len(ready["questions"]) == 1
+                      and ready["questions"][0]["field"] == ("users", "data", "successCriteria")[number - 1])
+                ready = call(client, f"answer {number}", "POST", "/api/chat", {
+                    "conversationId": first["conversationId"], "message": answer,
+                })
+                live(f"answer{number}", ready)
             check("follow-up preserves conversation identity", ready["conversationId"] == first["conversationId"])
             check("follow-up produces editable draft", ready["phase"] == "draft_ready"
                   and ready["questions"] == [] and isinstance(ready["draft"], dict))

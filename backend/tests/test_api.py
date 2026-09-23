@@ -255,7 +255,7 @@ def test_publication_requires_confirmation_and_recalculates_readiness(client):
         assert_error(client.post("/api/tasks", json=invalid))
 
 
-def test_fallback_chat_has_three_questions_then_editable_unpublished_draft(client):
+def test_fallback_chat_has_three_sequential_questions_then_editable_unpublished_draft(client):
     before = client.get("/api/catalog").json()
     response = client.post(
         "/api/chat",
@@ -267,21 +267,29 @@ def test_fallback_chat_has_three_questions_then_editable_unpublished_draft(clien
     assert first["conversationId"]
     assert first["phase"] == "clarifying"
     assert first["aiMode"] == "fallback"
-    assert len(first["questions"]) >= 3
-    assert len({question["id"] for question in first["questions"]}) == len(first["questions"])
-    assert all(question["field"] in DRAFT_FIELDS for question in first["questions"])
-    assert first["draft"] is None
-    next_response = client.post(
-        "/api/chat",
-        json={"conversationId": first["conversationId"], "message": "Не знаю ответы на эти вопросы"},
-    )
-    assert next_response.status_code == 200, next_response.text
-    ready = next_response.json()
+    assert len(first["questions"]) == 1
+    assert first["questions"][0]["field"] == "users"
+    assert first["draft"]["context"] == "Учителя долго проверяют пробные SAT"
+    asked = [first["questions"][0]["id"]]
+    ready = first
+    for answer, message in enumerate(("Преподаватели учебного центра", "Не знаю", "Не знаю"), 1):
+        next_response = client.post(
+            "/api/chat",
+            json={"conversationId": first["conversationId"], "message": message},
+        )
+        assert next_response.status_code == 200, next_response.text
+        ready = next_response.json()
+        assert ready["phase"] == ("draft_ready" if answer == 3 else "clarifying")
+        assert len(ready["questions"]) == (0 if answer == 3 else 1)
+        if ready["questions"]:
+            asked.append(ready["questions"][0]["id"])
+    assert len(set(asked)) == 3
     assert ready["conversationId"] == first["conversationId"]
     assert ready["phase"] == "draft_ready"
     assert ready["aiMode"] == "fallback"
     assert ready["questions"] == []
     assert set(ready["draft"]) == set(DRAFT_FIELDS)
+    assert ready["draft"]["users"] == "Преподаватели учебного центра"
     for field in ("data", "constraints", "contact", "successCriteria"):
         assert ready["draft"][field] == ""
     assert client.get("/api/catalog").json() == before
@@ -460,12 +468,14 @@ def test_sqlite_restart_preserves_chat_tasks_proposals_milestones_and_experience
         assert rows[0]["details"]["idea"] == payload["idea"]
         assert confirm(restarted, step["id"]).status_code == 200
         assert team_profile(restarted, "team-1") == persisted_team
-        reply = restarted.post(
-            "/api/chat", json={"conversationId": initial["conversationId"], "message": "Не знаю"}
-        )
-        assert reply.status_code == 200, reply.text
-        assert reply.json()["conversationId"] == initial["conversationId"]
-        assert reply.json()["phase"] == "draft_ready"
+        for answer in range(1, 4):
+            reply = restarted.post(
+                "/api/chat", json={"conversationId": initial["conversationId"], "message": "Не знаю"}
+            )
+            assert reply.status_code == 200, reply.text
+            assert reply.json()["conversationId"] == initial["conversationId"]
+            assert reply.json()["phase"] == ("draft_ready" if answer == 3 else "clarifying")
+            assert len(reply.json()["questions"]) == (0 if answer == 3 else 1)
 
 
 def test_catalog_polling_and_other_reads_never_call_ai(settings):
