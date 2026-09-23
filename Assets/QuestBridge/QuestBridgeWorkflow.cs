@@ -80,6 +80,7 @@ namespace QuestBridge
             Text(teamNavigation,"Выберите задачу\nи предложите решение",.08f,.12f,.84f,.14f,18,false,Muted);
             teamNavigation.transform.parent.gameObject.SetActive(false);
             try{var saved=PlayerPrefs.GetString("QuestBridge.LocalDraft","");if(saved.Length>0)currentDraft=JsonUtility.FromJson<DraftData>(saved)??new DraftData();}catch(ArgumentException){currentDraft=new DraftData();}
+            LoadScoreFeedbackState();
             foreach(var key in PlayerPrefs.GetString("QuestBridge.ManualFields","").Split(','))if(DraftFields.Contains(key))manualDraftFields.Add(key);
             offlineMessages=Mathf.Clamp(PlayerPrefs.GetInt("QuestBridge.OfflineMessages",0),0,OfflineQuestions.Length+1);
             if(string.IsNullOrWhiteSpace(serverUrl)&&offlineMessages>0)
@@ -216,7 +217,7 @@ namespace QuestBridge
         void DraftChanged()
         {
             editorRevision++;draftConfirmed=false;SetButtonText(confirmDraftButton,"Подтвердить сведения");confirmDraftButton.interactable=true;previewAt=Time.unscaledTime+.55f;RefreshScoreForecast();
-            scoreAnimationSerial++;if(editorScore){editorScore.text=confirmedDisplayScore+" / 100";editorScore.transform.localScale=Vector3.one;}
+            scoreAnimationSerial++;if(editorScore){editorScore.text=confirmedDisplayScore+" / 100";editorScore.color=Accent;editorScore.transform.localScale=Vector3.one;}
             if(editingPersonal){currentDraft=CloneDraft(editingDraft);SaveDraft();}
             UpdatePublishButton();
         }

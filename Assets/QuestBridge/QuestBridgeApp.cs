@@ -55,6 +55,9 @@ namespace QuestBridge
         float dismissMaxDistance;
         bool dismissStartedOutside;
         string filterBeforeDemo="Все";
+        bool mineBeforeDemo;
+        int readinessBeforeDemo;
+        string readinessCaptionBeforeDemo="Любая готовность";
         float lastChatWidth;
         const float RowHeight=224;
         sealed class ChatBubble { public RectTransform rect; public TMP_Text label; public bool user; public float top,height; }
@@ -189,7 +192,7 @@ namespace QuestBridge
         {
             QuestBridgeBrowserText.CloseActive();
             if(sending||publishing)return;conversationId="";pendingMessage="";offlineMessages=0;chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;input.text="";
-            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();SaveDraft();PlayerPrefs.Save();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
+            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();ResetScoreFeedbackState();SaveDraft();PlayerPrefs.Save();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
             AddMessage("Какую проблему бизнеса хотите решить? Опишите её своими словами.",false,false);
         }
         static void SetButtonText(UnityEngine.UI.Button b,string value)=>b.GetComponentInChildren<TMP_Text>().text=value;
@@ -483,12 +486,15 @@ namespace QuestBridge
             CloseDetails();ShowTeam(null,null,false);
             if(!demoLive)
             {
-                snapshotBeforeDemo=snapshot;filterBeforeDemo=filter;demoLive=true;demoTick=Time.unscaledTime+5;
-                SetButtonText(demoButton,"Выйти");Apply(Demo(),false);SetFilter("Все");DemoLeader();
+                snapshotBeforeDemo=snapshot;filterBeforeDemo=filter;mineBeforeDemo=mineOnly;readinessBeforeDemo=readinessFilter;
+                readinessCaptionBeforeDemo=readinessButton.GetComponentInChildren<TMP_Text>().text;
+                mineOnly=false;readinessFilter=0;SetButtonText(readinessButton,"Любая готовность");demoLive=true;demoTick=Time.unscaledTime+5;
+                SetButtonText(demoButton,"Выйти");Apply(Demo(),false);SetFilter("Все");UpdateScope();DemoLeader();
             }
             else
             {
-                demoLive=false;SetButtonText(demoButton,"Демо");Apply(lastServerSnapshot??snapshotBeforeDemo??Demo(),false);SetFilter(filterBeforeDemo);
+                demoLive=false;mineOnly=mineBeforeDemo;readinessFilter=readinessBeforeDemo;SetButtonText(readinessButton,readinessCaptionBeforeDemo);
+                SetButtonText(demoButton,"Демо");Apply(lastServerSnapshot??snapshotBeforeDemo??Demo(),false);SetFilter(filterBeforeDemo);UpdateScope();
                 connectionText.text=string.IsNullOrWhiteSpace(serverUrl)?"Офлайн-демо":onlineSnapshot?"Сервер подключён":"Подключение…";
             }
         }

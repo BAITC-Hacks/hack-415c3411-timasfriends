@@ -18,6 +18,11 @@ namespace QuestBridge
         string lastValue;
         readonly Vector3[] corners = new Vector3[4];
         readonly List<UnityEngine.UI.ScrollRect> scrollParents = new List<UnityEngine.UI.ScrollRect>();
+#if !UNITY_WEBGL || UNITY_EDITOR
+        QuestBridgeReadonlyInput editorSelection;
+        float originalTextAlpha;
+        int selectionOpenedFrame;
+#endif
 
         [Serializable]
         sealed class NativeOptions
@@ -67,9 +72,7 @@ namespace QuestBridge
             if (bridge) return bridge;
             bridge = text.gameObject.AddComponent<QuestBridgeBrowserText>();
             bridge.label = text;
-#if UNITY_WEBGL && !UNITY_EDITOR
             text.raycastTarget = true;
-#endif
             return bridge;
         }
 
@@ -86,7 +89,11 @@ namespace QuestBridge
         public void OnPointerClick(PointerEventData eventData)
         {
             if (eventData.button != PointerEventData.InputButton.Left || eventData.dragging) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
             Open();
+#else
+            if (!input) OpenEditorSelection(eventData);
+#endif
         }
 
         void Open()
@@ -130,6 +137,16 @@ namespace QuestBridge
                 lastValue = current;
                 QBText_SetValue(GetInstanceID(), current ?? "");
             }
+#else
+            if (active != this) return;
+            if (!label || !editorSelection || !label.gameObject.activeInHierarchy ||
+                (Time.frameCount > selectionOpenedFrame + 1 && EventSystem.current &&
+                 EventSystem.current.currentSelectedGameObject != editorSelection.gameObject))
+            {
+                Close();
+                return;
+            }
+            if (lastValue != label.text) Close();
 #endif
         }
 
@@ -140,10 +157,13 @@ namespace QuestBridge
             var options = Options();
             if (options == null) { Close(); return; }
             QBText_Position(JsonUtility.ToJson(options));
+#else
+            if (active == this && label) label.canvasRenderer.SetAlpha(0);
 #endif
         }
 
         void OnParentScroll(Vector2 _) { Close(); }
+        void OnApplicationFocus(bool focused) { if (!focused) Close(); }
         void OnDisable() { Close(); }
         void OnDestroy()
         {
@@ -160,8 +180,118 @@ namespace QuestBridge
             closing = true;
             try { ReadNative(true); }
             finally { FinishClose(); closing = false; }
+#else
+            if (active != this || closing) return;
+            closing = true;
+            active = null;
+            foreach (var scroll in scrollParents) if (scroll) scroll.onValueChanged.RemoveListener(OnParentScroll);
+            scrollParents.Clear();
+            var selection = editorSelection;
+            editorSelection = null;
+            if (selection)
+            {
+                selection.closeRequested = null;
+                selection.gameObject.SetActive(false);
+                Destroy(selection.gameObject);
+            }
+            if (label) label.canvasRenderer.SetAlpha(originalTextAlpha);
+            closing = false;
 #endif
         }
+
+#if !UNITY_WEBGL || UNITY_EDITOR
+        void OpenEditorSelection(PointerEventData pointer)
+        {
+            if (active == this || !isActiveAndEnabled || !label || !label.enabled || input) return;
+            if (!EventSystem.current || string.IsNullOrEmpty(label.text)) return;
+            CloseActive();
+            Canvas.ForceUpdateCanvases();
+            if (label.rectTransform.rect.width < 2 || label.rectTransform.rect.height < 2) return;
+
+            // Create only after the first click, when the caller has finished sizing its label.
+            // A child rect follows subsequent layout changes without changing the original label.
+            var box = new GameObject("Text selection", typeof(RectTransform));
+            box.SetActive(false);
+            var boxRect = (RectTransform)box.transform;
+            boxRect.SetParent(label.transform, false);
+            Stretch(boxRect);
+            var hitArea = box.AddComponent<UnityEngine.UI.Image>();
+            hitArea.color = Color.clear;
+            hitArea.raycastTarget = true;
+            var viewportObject = new GameObject("Viewport", typeof(RectTransform), typeof(UnityEngine.UI.RectMask2D));
+            var viewport = (RectTransform)viewportObject.transform;
+            viewport.SetParent(boxRect, false);
+            Stretch(viewport);
+            var textObject = new GameObject("Selectable text", typeof(RectTransform));
+            var textRect = (RectTransform)textObject.transform;
+            textRect.SetParent(viewport, false);
+            Stretch(textRect);
+            var text = textObject.AddComponent<TextMeshProUGUI>();
+            text.font = label.font;
+            text.fontSharedMaterial = label.fontSharedMaterial;
+            text.fontSize = label.fontSize;
+            text.fontStyle = label.fontStyle;
+            text.fontWeight = label.fontWeight;
+            text.color = label.color;
+            text.alignment = label.alignment;
+            text.margin = label.margin;
+            text.characterSpacing = label.characterSpacing;
+            text.wordSpacing = label.wordSpacing;
+            text.lineSpacing = label.lineSpacing;
+            text.paragraphSpacing = label.paragraphSpacing;
+            text.textWrappingMode = label.textWrappingMode;
+            text.overflowMode = TextOverflowModes.Overflow;
+            text.enableAutoSizing = false;
+            text.richText = false;
+            text.raycastTarget = false;
+
+            editorSelection = box.AddComponent<QuestBridgeReadonlyInput>();
+            editorSelection.textViewport = viewport;
+            editorSelection.textComponent = text;
+            editorSelection.targetGraphic = hitArea;
+            editorSelection.transition = UnityEngine.UI.Selectable.Transition.None;
+            editorSelection.navigation = new UnityEngine.UI.Navigation { mode = UnityEngine.UI.Navigation.Mode.None };
+            editorSelection.lineType = TMP_InputField.LineType.MultiLineNewline;
+            editorSelection.richText = false;
+            editorSelection.readOnly = true;
+            editorSelection.onFocusSelectAll = false;
+            editorSelection.resetOnDeActivation = false;
+            editorSelection.restoreOriginalTextOnEscape = false;
+            editorSelection.customCaretColor = true;
+            editorSelection.caretColor = new Color32(23, 33, 42, 255);
+            editorSelection.caretWidth = 2;
+            editorSelection.caretBlinkRate = 1.4f;
+            editorSelection.selectionColor = new Color32(65, 145, 230, 105);
+            lastValue = label.text;
+            editorSelection.SetTextWithoutNotify(label.richText ? label.GetParsedText() : label.text);
+            originalTextAlpha = label.canvasRenderer.GetAlpha();
+            active = this;
+            selectionOpenedFrame = Time.frameCount;
+            box.SetActive(true);
+            Canvas.ForceUpdateCanvases();
+            text.ForceMeshUpdate();
+            label.canvasRenderer.SetAlpha(0);
+            editorSelection.closeRequested = Close;
+            foreach (var scroll in GetComponentsInParent<UnityEngine.UI.ScrollRect>())
+            {
+                scrollParents.Add(scroll);
+                scroll.onValueChanged.AddListener(OnParentScroll);
+            }
+
+            // Reuse TMP's actual hit testing and selection implementation at the clicked point.
+            editorSelection.OnPointerDown(pointer);
+            editorSelection.OnPointerUp(pointer);
+            editorSelection.ActivateInputField();
+        }
+
+        static void Stretch(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = rect.offsetMax = Vector2.zero;
+            rect.localScale = Vector3.one;
+        }
+#endif
 
         void ReadNative(bool close)
         {
