@@ -204,15 +204,15 @@ namespace QuestBridge
             Text(scorePanel,"Полнота задачи",.07f,.89f,.86f,.065f,17,true);
             editorScore=Text(scorePanel,"… / 100",.07f,.765f,.86f,.12f,35,true,Accent);
             InitializeScoreFeedback(scorePanel,existing);
-            var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.14f,.86f,.53f,out var scoreScroll);
-            editorBreakdown=Text(scoreBody,"Запрашиваем расчёт…",0,0,1,1,16,false,Muted);editorBreakdown.alignment=TextAlignmentOptions.TopLeft;editorBreakdown.overflowMode=TextOverflowModes.Overflow;
-            scoreBody.sizeDelta=new Vector2(0,520);
+            editorBreakdown=Text(scorePanel,"Запрашиваем расчёт…",.07f,.17f,.86f,.50f,16,false,Muted);
+            editorBreakdown.alignment=TextAlignmentOptions.TopLeft;editorBreakdown.textWrappingMode=TextWrappingModes.NoWrap;editorBreakdown.lineSpacing=6;
+            Text(scorePanel,"Баллы за полноту сведений",.07f,.10f,.86f,.05f,14,false,Muted);
             Text(scorePanel,"ИИ-ясность — после публикации",.07f,.025f,.86f,.09f,14,false,Muted);
             confirmDraftButton=Button(pane,"Подтвердить сведения",.04f,.07f,.43f,.054f,ConfirmDraftWithFeedback,Blue);
             publishButton=Button(pane,existing==null?"Опубликовать":"Сохранить изменения",.655f,.055f,.305f,.068f,()=>PublishDraft(),null,true);
             editorStatus=Text(pane,"",.04f,.017f,.59f,.046f,14,false,Muted);
             UpdatePublishButton();previewAt=Time.unscaledTime;
-            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;scoreScroll.verticalNormalizedPosition=1;
+            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;
         }
         void DraftChanged()
         {
@@ -240,9 +240,9 @@ namespace QuestBridge
             {
                 if(!editorOpen||generation!=editorGeneration||revision!=editorRevision||!editorScore)return;
                 latestPreview=score;latestPreviewRevision=revision;RefreshScoreForecast();
-                var lines=new StringBuilder("Заполненность полей\n\n");
+                var lines=new StringBuilder();
                 foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
-                lines.Append("\nПодтверждение засчитает заполненные поля. Это оценка полноты, а не качества идеи.");editorBreakdown.text=lines.ToString();
+                editorBreakdown.text=lines.ToString().TrimEnd();
             },error=>{if(editorOpen&&generation==editorGeneration&&revision==editorRevision&&editorScore){previewRevision=-1;previewAt=Time.unscaledTime+3;editorBreakdown.text=error+"\nПовторяем расчёт…";}});
         }
         void PublishDraft()
@@ -287,15 +287,15 @@ namespace QuestBridge
                 float height=Mathf.Max(45,label.GetPreferredValues(value,width,0).y+8);row.sizeDelta=new Vector2(0,height+45);label.rectTransform.offsetMax=new Vector2(0,-34);top+=height+57;
             }
             body.sizeDelta=new Vector2(0,top);
-            var rating=Surface(pane,"Published score",.68f,.42f,.28f,.39f,Paper);
-            Text(rating,task.readiness+" / 100",.08f,.76f,.84f,.16f,32,true,Accent);
-            var scoreContent=CreateScroll(rating,"Published breakdown",.08f,.07f,.84f,.65f,out var scoreScroll);
+            var rating=Surface(pane,"Published score",.68f,.38f,.28f,.43f,Paper);
+            Text(rating,task.readiness+" / 100",.08f,.80f,.84f,.14f,32,true,Accent);
             var scoreText=new StringBuilder();foreach(var row in task.scoreBreakdown??Array.Empty<ScoreRow>())scoreText.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
-            var scoreLabel=Text(scoreContent,scoreText.ToString(),0,0,1,1,16,false,Muted);scoreLabel.alignment=TextAlignmentOptions.TopLeft;scoreLabel.overflowMode=TextOverflowModes.Overflow;scoreContent.sizeDelta=new Vector2(0,360);
-            DrawAiRating(pane,task,.68f,.17f,.28f,.22f);
-            Button(pane,isBusiness?"Предложения команд · "+task.proposalCount:"Откликнуться · "+task.proposalCount,.68f,.065f,.28f,.08f,()=>ShowProposals(task),null,true);
+            var scoreLabel=Text(rating,scoreText.ToString().TrimEnd(),.08f,.065f,.84f,.69f,16,false,Muted);
+            scoreLabel.alignment=TextAlignmentOptions.TopLeft;scoreLabel.textWrappingMode=TextWrappingModes.NoWrap;scoreLabel.lineSpacing=6;
+            DrawAiRating(pane,task,.68f,.145f,.28f,.22f);
+            Button(pane,isBusiness?"Предложения команд · "+task.proposalCount:"Откликнуться · "+task.proposalCount,.68f,.055f,.28f,.075f,()=>ShowProposals(task),null,true);
             if(isBusiness&&task.businessId==businessId)Button(pane,"Редактировать",.04f,.054f,.28f,.064f,()=>OpenDraftEditor(task),Blue);
-            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;scoreScroll.verticalNormalizedPosition=1;
+            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;
         }
         IEnumerator ApiRequest<T>(string method,string path,object body,Action<T> onSuccess,Action<string> onError=null)
         {
