@@ -28,6 +28,12 @@ namespace QuestBridge
         static readonly string[] FieldLabels={"Название","Тема","Контекст — что происходит сейчас","Потребность — что нужно изменить","Пользователи","Данные и материалы","Ограничения и сроки","Ожидаемый результат","Критерии успеха","Контакт","Формат взаимодействия","Порядок обратной связи"};
         static readonly string[] FieldHints={"Коротко: что требуется сделать","Например: Образование","Опишите текущий процесс","Какую проблему должна решить команда?","Кто будет пользоваться решением?","Какие примеры, файлы или источники доступны?","Срок, технологии, доступы и другие рамки","Что команда должна передать в результате?","По каким измеримым признакам примете работу?","Как связаться с представителем бизнеса?","Например: созвон раз в неделю","Кто и когда отвечает на вопросы команды?"};
 
+        static bool WebShowcaseEnabled()
+        {
+            if(!Uri.TryCreate(Application.absoluteURL,UriKind.Absolute,out var page))return false;
+            return page.Query.TrimStart('?').Split('&').Any(part=>part=="showcase=1");
+        }
+
         void ConfigureWebAddress()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -69,8 +75,8 @@ namespace QuestBridge
             teamNavigationStats=Text(teamNavigation,"",.08f,.655f,.84f,.085f,17,false,Muted);
             Button(teamNavigation,"Сменить команду",.08f,.575f,.84f,.062f,()=>ShowRoleChoice(true),Paper);
             Surface(teamNavigation,"Team rule",.08f,.532f,.84f,.002f,Line,false);
-            Button(teamNavigation,"Каталог задач",.08f,.423f,.84f,.078f,()=>{mineOnly=false;UpdateScope();},Blue);
-            Button(teamNavigation,"Мои отклики",.08f,.325f,.84f,.078f,()=>{mineOnly=true;UpdateScope();},Paper);
+            teamMenuButtons.Add(Button(teamNavigation,"Каталог задач",.08f,.423f,.84f,.078f,()=>{mineOnly=false;UpdateScope();},Blue));
+            teamMenuButtons.Add(Button(teamNavigation,"Мои отклики",.08f,.325f,.84f,.078f,()=>{mineOnly=true;UpdateScope();},Paper));
             Text(teamNavigation,"Выберите задачу\nи предложите решение",.08f,.12f,.84f,.14f,18,false,Muted);
             teamNavigation.transform.parent.gameObject.SetActive(false);
             try{var saved=PlayerPrefs.GetString("QuestBridge.LocalDraft","");if(saved.Length>0)currentDraft=JsonUtility.FromJson<DraftData>(saved)??new DraftData();}catch(ArgumentException){currentDraft=new DraftData();}
@@ -85,7 +91,7 @@ namespace QuestBridge
             if(roleOverlay){roleOverlay.gameObject.SetActive(false);Destroy(roleOverlay.gameObject);}
             roleOverlay=Surface(root,"Role selection",0,0,1,1,Paper,false,true);
             var pane=Surface(roleOverlay,"Welcome",.25f,.15f,.5f,.7f,Color.white);
-            Text(pane,"QuestBridge",.08f,.81f,.84f,.10f,34,true);
+            DrawBrand(pane,.08f,.80f,.38f,.13f);
             Text(pane,chooseTeam?"Выберите команду":"В какой роли продолжим?",.08f,.70f,.84f,.08f,24,true);
             if(!chooseTeam)
             {
@@ -93,14 +99,13 @@ namespace QuestBridge
                 Text(pane,"Сформулировать задачу и выбрать команду",.09f,.413f,.82f,.065f,18,false,Muted);
                 Button(pane,"Я команда",.08f,.23f,.84f,.115f,()=>ShowRoleChoice(true),Blue);
                 Text(pane,"Найти задачу и предложить решение",.09f,.151f,.82f,.065f,18,false,Muted);
-                Text(pane,"Демонстрационные профили",.08f,.045f,.84f,.055f,15,false,Muted);
             }
             else
             {
                 var choices=(lastServerSnapshot?.teams??snapshot?.teams??Array.Empty<Team>()).Where(t=>t.id.StartsWith("team-",StringComparison.Ordinal)).ToArray();
                 if(choices.Length==0)choices=new[]{new Team{id="team-1",name="TimasFriends"},new Team{id="team-2",name="Fraction Lab"},new Team{id="team-3",name="Study Map"},new Team{id="team-4",name="Science Cards"},new Team{id="team-5",name="Lab Notes"}};
                 var body=CreateScroll(pane,"Choose profile",.08f,.15f,.84f,.50f,out var list);
-                int n=0;foreach(var team in choices){var row=WorkflowRow(body,"Team choice",n++*64,54);Button(row,team.name,0,0,1,1,()=>{activeTeamId=team.id;PlayerPrefs.SetString("QuestBridge.Team",activeTeamId);SetRole(false);},Paper);}
+                int n=0;foreach(var team in choices){var row=WorkflowRow(body,"Team choice",n++*64,54);Button(row,TeamName(team),0,0,1,1,()=>{activeTeamId=team.id;PlayerPrefs.SetString("QuestBridge.Team",activeTeamId);SetRole(false);},Paper);}
                 body.sizeDelta=new Vector2(0,n*64);Button(pane,"← Назад",.08f,.043f,.28f,.072f,()=>ShowRoleChoice(),Paper);
             }
         }
@@ -120,10 +125,20 @@ namespace QuestBridge
         {
             if(!teamNavigationName)return;
             var team=snapshot?.teams?.FirstOrDefault(t=>t.id==activeTeamId);
-            teamNavigationName.text=team?.name??"Команда";
+            teamNavigationName.text=TeamName(team);
             teamNavigationStats.text=team==null?"Выберите профиль команды":team.experience+" опыта  ·  "+team.completed+" этапов\n"+(team.stack??"");
         }
-        void UpdateScope(){SetButtonText(mineButton,mineOnly?"Все задачи":isBusiness?"Мои задачи":"Мои отклики");Arrange(false);}
+        void UpdateScope()
+        {
+            SetButtonText(mineButton,mineOnly?"Все задачи":isBusiness?"Мои задачи":"Мои отклики");
+            for(int i=0;i<teamMenuButtons.Count;i++)
+            {
+                var button=teamMenuButtons[i];bool selected=(i==1)==mineOnly;
+                var motion=button.GetComponent<QuestBridgeMotion>();motion.resting=selected?Blue:Paper;motion.hovered=selected?Blue:Color.white;
+                button.GetComponentInChildren<TMP_Text>().color=selected?Accent:Ink;
+            }
+            Arrange(false);
+        }
         bool WorkflowVisible(Card card)
         {
             bool readiness=readinessFilter==0||readinessFilter==1&&card.readiness<40||readinessFilter==2&&card.readiness>=40&&card.readiness<70||readinessFilter==3&&card.readiness>=70&&card.readiness<90||readinessFilter==4&&card.readiness>=90;
@@ -180,19 +195,23 @@ namespace QuestBridge
             }
             fields.sizeDelta=new Vector2(0,top);
             var scorePanel=Surface(pane,"Rating",.655f,.145f,.305f,.665f,Paper);
-            Text(scorePanel,"После подтверждения",.07f,.89f,.86f,.065f,17,true);
+            Text(scorePanel,"Полнота задачи",.07f,.89f,.86f,.065f,17,true);
             editorScore=Text(scorePanel,"… / 100",.07f,.765f,.86f,.12f,35,true,Accent);
-            var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.09f,.86f,.64f,out var scoreScroll);
+            InitializeScoreFeedback(scorePanel,existing);
+            var scoreBody=CreateScroll(scorePanel,"Score details",.07f,.14f,.86f,.53f,out var scoreScroll);
             editorBreakdown=Text(scoreBody,"Запрашиваем расчёт…",0,0,1,1,16,false,Muted);editorBreakdown.alignment=TextAlignmentOptions.TopLeft;editorBreakdown.overflowMode=TextOverflowModes.Overflow;
             scoreBody.sizeDelta=new Vector2(0,520);
-            confirmDraftButton=Button(pane,"□ Подтверждаю сведения",.04f,.07f,.43f,.054f,()=>{draftConfirmed=!draftConfirmed;SetButtonText(confirmDraftButton,draftConfirmed?"✓ Сведения подтверждены":"□ Подтверждаю сведения");UpdatePublishButton();},Paper);
+            Text(scorePanel,"ИИ-ясность — после публикации",.07f,.025f,.86f,.09f,14,false,Muted);
+            confirmDraftButton=Button(pane,"Подтвердить сведения",.04f,.07f,.43f,.054f,ConfirmDraftWithFeedback,Blue);
             publishButton=Button(pane,existing==null?"Опубликовать":"Сохранить изменения",.655f,.055f,.305f,.068f,()=>PublishDraft(),null,true);
             editorStatus=Text(pane,"",.04f,.017f,.59f,.046f,14,false,Muted);
             UpdatePublishButton();previewAt=Time.unscaledTime;
+            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;scoreScroll.verticalNormalizedPosition=1;
         }
         void DraftChanged()
         {
-            editorRevision++;draftConfirmed=false;SetButtonText(confirmDraftButton,"□ Подтверждаю сведения");previewAt=Time.unscaledTime+.55f;
+            editorRevision++;draftConfirmed=false;SetButtonText(confirmDraftButton,"Подтвердить сведения");confirmDraftButton.interactable=true;previewAt=Time.unscaledTime+.55f;RefreshScoreForecast();
+            scoreAnimationSerial++;if(editorScore){editorScore.text=confirmedDisplayScore+" / 100";editorScore.transform.localScale=Vector3.one;}
             if(editingPersonal){currentDraft=CloneDraft(editingDraft);SaveDraft();}
             UpdatePublishButton();
         }
@@ -214,11 +233,11 @@ namespace QuestBridge
             yield return ApiRequest<ScorePreview>("POST","/api/tasks/preview",new PreviewBody{draft=draft,confirmedFields=FilledFields(draft)},score=>
             {
                 if(!editorOpen||generation!=editorGeneration||revision!=editorRevision||!editorScore)return;
-                editorScore.text=score.readiness+" / 100";
-                var lines=new StringBuilder(ReadinessName(score.readiness)+"\n\n");
-                foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(row.points>0?"✓ ":"○ ").Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
-                lines.Append("\nБаллы за заполненные и подтверждённые поля.");editorBreakdown.text=lines.ToString();
-            },error=>{if(editorOpen&&generation==editorGeneration&&revision==editorRevision&&editorScore){editorScore.text="— / 100";editorBreakdown.text=error;}});
+                latestPreview=score;latestPreviewRevision=revision;RefreshScoreForecast();
+                var lines=new StringBuilder("Заполненность полей\n\n");
+                foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
+                lines.Append("\nПодтверждение засчитает заполненные поля. Это оценка полноты, а не качества идеи.");editorBreakdown.text=lines.ToString();
+            },error=>{if(editorOpen&&generation==editorGeneration&&revision==editorRevision&&editorScore){previewRevision=-1;previewAt=Time.unscaledTime+3;editorBreakdown.text=error+"\nПовторяем расчёт…";}});
         }
         void PublishDraft()
         {
@@ -249,7 +268,8 @@ namespace QuestBridge
         void ShowTask(TaskRecord task)
         {
             if(task?.draft==null){Notify("Сервер вернул неполную карточку");return;}
-            var pane=WorkflowPane(task.draft.title,task.draft.category+" · "+ReadinessName(task.readiness)+(task.demo?" · Пример":""));
+            string taskTitle=task.demo&&(task.draft.title??"").StartsWith("ДЕМО:",StringComparison.OrdinalIgnoreCase)?task.draft.title.Substring(5).Trim():task.draft.title;
+            var pane=WorkflowPane(taskTitle,task.draft.category+" · "+ReadinessName(task.readiness)+(task.demo?" · Пример":""));
             var body=CreateScroll(pane,"Full task",.04f,.14f,.61f,.67f,out var scroll);float top=0;
             Canvas.ForceUpdateCanvases();float width=Mathf.Max(240,body.rect.width);
             for(int i=2;i<DraftFields.Length;i++)
@@ -257,17 +277,19 @@ namespace QuestBridge
                 string value=DraftValue(task.draft,DraftFields[i]);if(string.IsNullOrWhiteSpace(value))value="Не указано";
                 var row=WorkflowRow(body,DraftFields[i],top,100);Text(row,FieldLabels[i],0,0,1,1,16,true).rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Top,0,27);
                 var label=Text(row,value,0,0,1,1,18,false,Muted);label.alignment=TextAlignmentOptions.TopLeft;label.overflowMode=TextOverflowModes.Overflow;
+                QuestBridgeBrowserText.AttachSelectable(label);
                 float height=Mathf.Max(45,label.GetPreferredValues(value,width,0).y+8);row.sizeDelta=new Vector2(0,height+45);label.rectTransform.offsetMax=new Vector2(0,-34);top+=height+57;
             }
             body.sizeDelta=new Vector2(0,top);
-            var rating=Surface(pane,"Published score",.68f,.30f,.28f,.51f,Paper);
+            var rating=Surface(pane,"Published score",.68f,.42f,.28f,.39f,Paper);
             Text(rating,task.readiness+" / 100",.08f,.76f,.84f,.16f,32,true,Accent);
             var scoreContent=CreateScroll(rating,"Published breakdown",.08f,.07f,.84f,.65f,out var scoreScroll);
             var scoreText=new StringBuilder();foreach(var row in task.scoreBreakdown??Array.Empty<ScoreRow>())scoreText.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
             var scoreLabel=Text(scoreContent,scoreText.ToString(),0,0,1,1,16,false,Muted);scoreLabel.alignment=TextAlignmentOptions.TopLeft;scoreLabel.overflowMode=TextOverflowModes.Overflow;scoreContent.sizeDelta=new Vector2(0,360);
-            Text(pane,"Откликов: "+task.proposalCount,.68f,.215f,.28f,.055f,19,true);
-            Button(pane,isBusiness?"Предложения команд":"Откликнуться / отклики",.68f,.065f,.28f,.08f,()=>ShowProposals(task),null,true);
+            DrawAiRating(pane,task,.68f,.17f,.28f,.22f);
+            Button(pane,isBusiness?"Предложения команд · "+task.proposalCount:"Откликнуться · "+task.proposalCount,.68f,.065f,.28f,.08f,()=>ShowProposals(task),null,true);
             if(isBusiness&&task.businessId==businessId)Button(pane,"Редактировать",.04f,.054f,.28f,.064f,()=>OpenDraftEditor(task),Blue);
+            Canvas.ForceUpdateCanvases();scroll.verticalNormalizedPosition=1;scoreScroll.verticalNormalizedPosition=1;
         }
         IEnumerator ApiRequest<T>(string method,string path,object body,Action<T> onSuccess,Action<string> onError=null)
         {

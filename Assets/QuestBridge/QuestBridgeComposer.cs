@@ -58,6 +58,7 @@ namespace QuestBridge
             }
 
             field.enabled = wasEnabled;
+            QuestBridgeBrowserText.AttachInput(field);
         }
     }
 }

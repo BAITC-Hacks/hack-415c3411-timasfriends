@@ -72,6 +72,7 @@ namespace QuestBridge
             text.rectTransform.anchoredPosition = new Vector2(0, -30);
             text.verticalAlignment = VerticalAlignmentOptions.Top;
             text.overflowMode = TextOverflowModes.Overflow;
+            QuestBridgeBrowserText.AttachSelectable(text);
             var height = Mathf.Max(30, text.GetPreferredValues(text.text, Mathf.Max(100, width), Mathf.Infinity).y + 8);
             text.rectTransform.sizeDelta = new Vector2(0, height);
             row.sizeDelta = new Vector2(0, height + 46);
@@ -189,7 +190,7 @@ namespace QuestBridge
             privacy = Button(privacyRow, "Показывать детали только бизнесу", 0, 0, 1, 1, () =>
             {
                 publicDetails = !publicDetails;
-                SetButtonText(privacy, publicDetails ? "Детали видны другим командам ✓" : "Показывать детали только бизнесу");
+                SetButtonText(privacy, publicDetails ? "Детали видны другим командам" : "Показывать детали только бизнесу");
             }, Blue);
             fields.sizeDelta = new Vector2(0, 614);
             var status = Text(pane, "Отправляете от команды: " + (snapshot?.teams?.FirstOrDefault(t => t.id == activeTeamId)?.name ?? activeTeamId),
