@@ -96,17 +96,10 @@ namespace QuestBridge
             CloseDetails();if(focus)ToggleFocus();
             if(roleOverlay){roleOverlay.gameObject.SetActive(false);Destroy(roleOverlay.gameObject);}
             roleOverlay=Surface(root,"Role selection",0,0,1,1,Paper,false,true);
+            if(!chooseTeam){DrawRoleLanding();return;}
             var pane=Surface(roleOverlay,"Welcome",.25f,.15f,.5f,.7f,Color.white);
             DrawBrand(pane,.08f,.80f,.38f,.13f);
-            Text(pane,chooseTeam?"Выберите команду":"В какой роли продолжим?",.08f,.70f,.84f,.08f,24,true);
-            if(!chooseTeam)
-            {
-                Button(pane,"Я бизнес",.08f,.49f,.84f,.115f,()=>SetRole(true),null,true);
-                Text(pane,"Сформулировать задачу и выбрать команду",.09f,.413f,.82f,.065f,18,false,Muted);
-                Button(pane,"Я команда",.08f,.23f,.84f,.115f,()=>ShowRoleChoice(true),Blue);
-                Text(pane,"Найти задачу и предложить решение",.09f,.151f,.82f,.065f,18,false,Muted);
-            }
-            else
+            Text(pane,"Выберите команду",.08f,.70f,.84f,.08f,24,true);
             {
                 var choices=(lastServerSnapshot?.teams??snapshot?.teams??Array.Empty<Team>()).Where(t=>t.id.StartsWith("team-",StringComparison.Ordinal)).ToArray();
                 if(choices.Length==0)choices=new[]{new Team{id="team-1",name="TimasFriends"},new Team{id="team-2",name="Fraction Lab"},new Team{id="team-3",name="Study Map"},new Team{id="team-4",name="Science Cards"},new Team{id="team-5",name="Lab Notes"}};
