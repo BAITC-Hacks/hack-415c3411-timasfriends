@@ -96,7 +96,7 @@ namespace QuestBridge
         UnityEngine.UI.Button Button(Transform p,string title,float x,float y,float w,float h,Action action,Color? fill=null,bool dark=false)
         {
             Color normal=fill??(dark?Ink:Blue);var r=Surface(p,title,x,y,w,h,normal,true,true);
-            var b=r.gameObject.AddComponent<UnityEngine.UI.Button>();b.targetGraphic=r.GetComponent<UnityEngine.UI.Image>();b.transition=UnityEngine.UI.Selectable.Transition.None;
+            var b=r.gameObject.AddComponent<UnityEngine.UI.Button>();b.targetGraphic=r.GetComponent<UnityEngine.UI.Image>();b.transition=UnityEngine.UI.Selectable.Transition.None;b.targetGraphic.CrossFadeColor(Color.white,0,true,true);
             Text(r,title,.06f,0,.88f,1,16,true,dark?Color.white:Ink).alignment=TextAlignmentOptions.Center;
             var motion=r.gameObject.AddComponent<QuestBridgeMotion>();motion.surface=r.GetComponent<UnityEngine.UI.Image>();motion.resting=normal;motion.hovered=Color.Lerp(normal,dark?Accent:Color.white,.18f);
             b.onClick.AddListener(()=>{Play(clickClip);motion.Pulse(.025f);action();});return b;
