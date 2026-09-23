@@ -48,6 +48,8 @@ namespace QuestBridge
         int demoVersion;
         int selectionFrame;
         int offlineMessages;
+        static readonly string[] OfflineQuestionFields={"users","data","successCriteria"};
+        static readonly string[] OfflineQuestions={"Кто будет пользоваться решением?","Какие данные, примеры или материалы у вас уже есть?","По какому проверяемому признаку вы поймёте, что задача решена?"};
         UnityEngine.InputSystem.Pointer dismissPointer;
         Vector2 dismissPressPosition;
         float dismissMaxDistance;
@@ -187,7 +189,7 @@ namespace QuestBridge
         {
             QuestBridgeBrowserText.CloseActive();
             if(sending||publishing)return;conversationId="";pendingMessage="";offlineMessages=0;chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;input.text="";
-            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();SaveDraft();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
+            manualDraftFields.Clear();currentDraftTask=null;publicationKey="";lastPublicationPayload="";currentDraft=new DraftData();SaveDraft();PlayerPrefs.Save();draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
             AddMessage("Какую проблему бизнеса хотите решить? Опишите её своими словами.",false,false);
         }
         static void SetButtonText(UnityEngine.UI.Button b,string value)=>b.GetComponentInChildren<TMP_Text>().text=value;
@@ -426,6 +428,28 @@ namespace QuestBridge
                 yield return new WaitForSecondsRealtime(Mathf.Max(.1f,nextPoll-Time.unscaledTime));
             }
         }
+        void RememberOfflineAnswer(string field,string message)
+        {
+            if(manualDraftFields.Contains(field))return;
+            string value=message.Trim(),normalized=value.Trim(' ','.','!','?').ToLowerInvariant();
+            if(new[]{"не знаю","пока не знаю","неизвестно","не указано","нет данных","данных нет","нет","tbd","n/a","unknown","-"}.Contains(normalized))return;
+            SetDraftValue(currentDraft,field,value.Length>2000?value.Substring(0,2000):value);
+        }
+        void ShowOfflineQuestion()
+        {
+            assistantMode.text="Без ИИ · пошаговый режим";
+            if(offlineMessages>=1&&offlineMessages<=OfflineQuestions.Length)
+            {
+                draftStatus.text="Уточнение "+offlineMessages+" из "+OfflineQuestions.Length;
+                AddMessage("Вопрос "+offlineMessages+" из "+OfflineQuestions.Length+". "+OfflineQuestions[offlineMessages-1]+"\nЕсли пока не знаете, напишите «не знаю».",false);
+            }
+            else if(offlineMessages>OfflineQuestions.Length)
+            {
+                draftStatus.text="Карточка готова к правкам";
+                AddMessage("Уточнения завершены. Откройте карточку и проверьте ответы. Неизвестные детали можно добавить позже; публикацию нужно подтвердить отдельно.",false);
+                Notify("Черновик готов — откройте карточку");editDraftButton.GetComponent<QuestBridgeMotion>().Pulse(.04f);
+            }
+        }
         IEnumerator Chat()
         {
             string message=input.text.Trim();if(message.Length==0)yield break;if(!string.IsNullOrWhiteSpace(serverUrl)&&!ValidBaseUrl()){AddMessage("Проверьте адрес сервера. Ваш текст сохранён.",false);yield break;}
@@ -433,10 +457,11 @@ namespace QuestBridge
             if(pendingMessage!=message)AddMessage(message,true);pendingMessage=message;bool success=false;
             if(string.IsNullOrWhiteSpace(serverUrl))
             {
-                yield return new WaitForSecondsRealtime(.55f);offlineMessages++;
-                AddMessage(offlineMessages==1?"Чтобы уточнить задачу, расскажите:\n\n1. Кто будет пользоваться решением?\n2. Какие данные у вас уже есть?\n3. Какой результат вы хотите получить?":"Сообщение сохранено в этой беседе. Уточнения завершены; неизвестные детали можно добавить позже.",false);
-                if(offlineMessages==1){currentDraft=new DraftData{context=message};SaveDraft();}
-                assistantMode.text="Без ИИ · пошаговый режим";draftStatus.text=offlineMessages==1?"Уточняем задачу":"Откройте карточку";success=true;
+                yield return new WaitForSecondsRealtime(.55f);
+                if(offlineMessages==0)RememberOfflineAnswer("context",message);
+                else if(offlineMessages<=OfflineQuestionFields.Length)RememberOfflineAnswer(OfflineQuestionFields[offlineMessages-1],message);
+                offlineMessages=Mathf.Min(offlineMessages+1,OfflineQuestions.Length+1);
+                SaveDraft();PlayerPrefs.Save();ShowOfflineQuestion();success=true;
             }
             else
             {

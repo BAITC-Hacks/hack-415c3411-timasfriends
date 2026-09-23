@@ -4,7 +4,7 @@
     "message": {"type": "string", "minLength": 1, "maxLength": 6000},
     "phase": {"type": "string", "enum": ["clarifying", "draft_ready"]},
     "questions": {
-      "type": "array", "maxItems": 12,
+      "type": "array", "maxItems": 1,
       "items": {
         "type": "object",
         "properties": {
@@ -15,7 +15,7 @@
         "required": ["id", "field", "text"], "additionalProperties": false
       }
     },
-    "draft": {"anyOf": [{"$ref": "#/$defs/draft"}, {"type": "null"}]},
+    "draft": {"$ref": "#/$defs/draft"},
     "sources": {
       "type": "array", "maxItems": 24,
       "items": {
