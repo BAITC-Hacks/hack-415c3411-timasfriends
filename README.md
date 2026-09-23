@@ -2,11 +2,17 @@
 
 Unity 6000.3.7f1. Target: browser via WebGL.
 
+WebGL support is installed and the working Editor has been switched to WebGL. The build scene list starts with `Assets/QuestBridge/QuestBridge.unity`; default Web canvas size is 1600×900. This configures the target, but is not a completed browser build.
+
 ## Run the first UI prototype
 
 Open this repository as a Unity project. Open `Assets/QuestBridge/QuestBridge.unity` and press Play. The interface is created at runtime by `QuestBridgeApp`. No API keys are required.
 
 Try scrolling the central catalog, selecting a round team avatar, opening a task, filtering categories, toggling focus and sound, and sending a draft. **Демо** starts a clearly labelled stream of sample leader changes every five seconds; **Пауза** stops it. Cards animate position and score changes; unchanged server snapshots keep their buttons and scroll position. Sound starts quietly enabled and remembers your mute preference. Focus uses a soft white veil, not a GPU blur; it suppresses sound and dims team details. The UI targets desktop landscape; WebGL build and browser verification are pending.
+
+Exit focus with the large **Вернуться в каталог** button beneath the center message. Click the dimmed background to close a task detail window; clicks inside it do not close it. Click outside the team panel to dismiss its selection. Escape closes the top detail window, then focus, then the team selection.
+
+For sharp text in Game view, disable **Low Resolution Aspect Ratios**, use native scale **1x**, and expand the Game view. `AgentScripts/ShowPreview.cs` applies these Editor-only preview settings. The UI canvas uses pixel-perfect positioning and scales with screen height so labels retain their line height in wide windows. The generated font retains its 90-point SDF source sampling.
 
 ## Server integration
 

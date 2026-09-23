@@ -45,6 +45,7 @@ namespace QuestBridge
         string conversationId="", selectedTeamId, selectedCardId, filter="Все", lastTeamFingerprint="", pendingMessage="";
         float chatHeight, toastUntil, demoTick, introTime;
         int demoVersion;
+        int selectionFrame;
         const float RowHeight=206;
         sealed class CardView
         {
@@ -90,7 +91,7 @@ namespace QuestBridge
         TMP_Text Text(Transform p,string value,float x,float y,float w,float h,int size=18,bool bold=false,Color? color=null)
         {
             var r=Rect(p,"Text",x,y,w,h);var t=r.gameObject.AddComponent<TextMeshProUGUI>();t.font=font;t.text=value;t.fontSize=size;t.color=color??Ink;t.richText=false;t.raycastTarget=false;t.characterSpacing=-.4f;
-            t.fontStyle=bold?FontStyles.Bold:FontStyles.Normal;t.verticalAlignment=VerticalAlignmentOptions.Middle;t.overflowMode=TextOverflowModes.Ellipsis;return t;
+            t.enableAutoSizing=false;t.fontStyle=bold?FontStyles.Bold:FontStyles.Normal;t.verticalAlignment=VerticalAlignmentOptions.Middle;t.overflowMode=TextOverflowModes.Ellipsis;return t;
         }
         UnityEngine.UI.Button Button(Transform p,string title,float x,float y,float w,float h,Action action,Color? fill=null,bool dark=false)
         {
@@ -119,8 +120,8 @@ namespace QuestBridge
         }
         void Build()
         {
-            root=Rect(transform,"QuestBridge Canvas",0,0,1,1);root.gameObject.AddComponent<Canvas>().renderMode=RenderMode.ScreenSpaceOverlay;
-            var scaler=root.gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();scaler.uiScaleMode=UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;scaler.referenceResolution=new Vector2(1600,900);scaler.matchWidthOrHeight=.5f;
+            root=Rect(transform,"QuestBridge Canvas",0,0,1,1);var canvas=root.gameObject.AddComponent<Canvas>();canvas.renderMode=RenderMode.ScreenSpaceOverlay;canvas.pixelPerfect=true;
+            var scaler=root.gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();scaler.uiScaleMode=UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;scaler.referenceResolution=new Vector2(1600,900);scaler.matchWidthOrHeight=1;
             root.gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();if(!FindFirstObjectByType<EventSystem>())new GameObject("EventSystem",typeof(EventSystem),typeof(InputSystemUIInputModule));
             Surface(root,"Page",0,0,1,1,Color.white,false);entrance=root.gameObject.AddComponent<CanvasGroup>();entrance.alpha=0;
             var brand=Surface(root,"Brand",.023f,.921f,.026f,.046f,Ink);Text(brand,"q",0,0,1,1,26,true,Color.white).alignment=TextAlignmentOptions.Center;
@@ -130,7 +131,7 @@ namespace QuestBridge
             left=Surface(root,"Assistant panel",.022f,.062f,.261f,.817f,Paper);middle=Rect(root,"Catalog panel",.305f,.062f,.438f,.817f);right=Rect(root,"Profile panel",.766f,.062f,.212f,.817f);
             Surface(root,"Right divider",.754f,.062f,.0008f,.817f,Line,false);
             var spark=Surface(left,"Assistant mark",.055f,.911f,.10f,.053f,Ink);Text(spark,"+",0,0,1,1,22,true,Color.white).alignment=TextAlignmentOptions.Center;
-            Text(left,"Помощник",.19f,.921f,.58f,.044f,23,true);assistantMode=Text(left,string.IsNullOrWhiteSpace(serverUrl)?"Демо-режим":"AI-помощник",.19f,.892f,.58f,.030f,13,false,Muted);
+            Text(left,"Помощник",.19f,.925f,.58f,.055f,23,true);assistantMode=Text(left,string.IsNullOrWhiteSpace(serverUrl)?"Демо-режим":"AI-помощник",.19f,.892f,.58f,.030f,13,false,Muted);
             Surface(left,"Chat divider",.055f,.862f,.89f,.0015f,Line,false);
             chatContent=CreateScroll(left,"Conversation",.055f,.32f,.89f,.52f,out chatScroll);
             AddMessage("Что хотите улучшить в своём бизнесе?",false,false);AddMessage("Опишите задачу своими словами. Я помогу уточнить детали.",false,false);
@@ -140,16 +141,17 @@ namespace QuestBridge
             var placeholder=Text(textArea,"Опишите вашу задачу…",0,0,1,1,18,false,Muted);placeholder.verticalAlignment=VerticalAlignmentOptions.Top;input.placeholder=placeholder;
             sendButton=Button(left,"Отправить  ↑",.055f,.036f,.89f,.051f,()=>{if(!sending)StartCoroutine(Chat());},null,true);
             focusButton=Button(left,"Фокус",.69f,.302f,.255f,.036f,ToggleFocus,Color.white);
-            Text(middle,"Каталог задач",0,.920f,.7f,.065f,35,true);
+            Text(middle,"Каталог задач",0,.917f,.7f,.075f,35,true);
             var live=Surface(middle,"Live dot",.813f,.95f,.012f,.015f,Accent,false);live.GetComponent<UnityEngine.UI.Image>().sprite=circle;Text(middle,"LIVE",.84f,.935f,.16f,.04f,14,true,Accent);
-            countText=Text(middle,"",0,.873f,.90f,.033f,16,false,Muted);
+            countText=Text(middle,"",0,.867f,.90f,.044f,16,false,Muted);
             filters["Все"]=Button(middle,"Все",0,.800f,.145f,.045f,()=>SetFilter("Все"),Ink,true);
             filters["Образование"]=Button(middle,"Образование",.165f,.800f,.275f,.045f,()=>SetFilter("Образование"),Paper);
             filters["Бизнес"]=Button(middle,"Бизнес",.46f,.800f,.18f,.045f,()=>SetFilter("Бизнес"),Paper);
             demoButton=Button(middle,"Демо",.80f,.800f,.20f,.045f,()=>{demoLive=!demoLive;demoTick=Time.unscaledTime+5;SetButtonText(demoButton,demoLive?"Пауза":"Демо");if(demoLive)DemoLeader();else connectionText.text="ДЕМО · события на паузе";},Blue);demoButton.gameObject.SetActive(string.IsNullOrWhiteSpace(serverUrl));
             content=CreateScroll(middle,"Task list",-.006f,.069f,1.012f,.702f,out catalogScroll);activityText=Text(middle,"Готовность задачи определяет её место",0,.008f,1,.043f,14,false,Muted);
-            var veil=Surface(middle,"Focus veil",-.008f,0,1.016f,1,new Color(1,1,1,.96f));focusGroup=veil.gameObject.AddComponent<CanvasGroup>();focusGroup.alpha=0;focusGroup.blocksRaycasts=false;
+            var veil=Surface(middle,"Focus veil",-.008f,0,1.016f,1,new Color(1,1,1,.96f));focusGroup=veil.gameObject.AddComponent<CanvasGroup>();focusGroup.alpha=0;focusGroup.blocksRaycasts=false;focusGroup.interactable=false;
             Text(veil,"Сосредоточьтесь на идее",.1f,.48f,.8f,.07f,26,true).alignment=TextAlignmentOptions.Center;Text(veil,"Каталог подождёт",.1f,.425f,.8f,.045f,17,false,Muted).alignment=TextAlignmentOptions.Center;
+            Button(veil,"Вернуться в каталог",.20f,.31f,.60f,.078f,()=>{if(focus)ToggleFocus();},null,true);
             rightGroup=right.gameObject.AddComponent<CanvasGroup>();ShowTeam(null,null,false);
             connectionText=Text(root,string.IsNullOrWhiteSpace(serverUrl)?"ДЕМО · пример данных":"Подключение…",.025f,.017f,.5f,.025f,12,false,Muted);Text(root,"TimasFriends / HackAlem",.79f,.017f,.19f,.025f,12,false,Muted).alignment=TextAlignmentOptions.Right;
             var toast=Surface(root,"Event toast",.36f,.855f,.38f,.056f,Ink);toastGroup=toast.gameObject.AddComponent<CanvasGroup>();toastGroup.alpha=0;toastGroup.blocksRaycasts=false;toastText=Text(toast,"",.045f,0,.91f,1,16,true,Color.white);
@@ -170,7 +172,7 @@ namespace QuestBridge
         void Update()
         {
             if(!focusGroup)return;float dt=Time.unscaledDeltaTime;introTime+=dt;entrance.alpha=Mathf.Clamp01(introTime/.38f);float blend=1-Mathf.Exp(-10*dt);
-            focusGroup.alpha=Mathf.Lerp(focusGroup.alpha,focus?1:0,blend);focusGroup.blocksRaycasts=focus;focusGroup.GetComponent<UnityEngine.UI.Image>().raycastTarget=focus;
+            focusGroup.alpha=Mathf.Lerp(focusGroup.alpha,focus?1:0,blend);focusGroup.blocksRaycasts=focus;focusGroup.interactable=focus;focusGroup.GetComponent<UnityEngine.UI.Image>().raycastTarget=focus;
             rightGroup.alpha=Mathf.Lerp(rightGroup.alpha,focus?.16f:1,blend);rightGroup.interactable=!focus;rightGroup.blocksRaycasts=!focus;
             toastGroup.alpha=Mathf.Lerp(toastGroup.alpha,!focus&&Time.unscaledTime<toastUntil?1:0,blend);
             foreach(var v in cards.Values)
@@ -179,6 +181,21 @@ namespace QuestBridge
                 v.highlight=Mathf.Max(0,v.highlight-dt*.55f);v.group.alpha=Mathf.MoveTowards(v.group.alpha,1,dt*3.5f);v.strip.color=v.highlight>0&&!focus?new Color(Accent.r,Accent.g,Accent.b,v.highlight):Color.clear;
             }
             if(demoLive&&Time.unscaledTime>=demoTick&&!focus&&string.IsNullOrWhiteSpace(serverUrl)){demoTick=Time.unscaledTime+5;DemoLeader();}
+        }
+        void LateUpdate()
+        {
+            if(!root)return;
+            if(UnityEngine.InputSystem.Keyboard.current?.escapeKey.wasPressedThisFrame==true)
+            {
+                if(detailOverlay)CloseDetails();else if(focus)ToggleFocus();else if(selectedTeamId!=null)ShowTeam(null,null,false);
+                return;
+            }
+            var pointer=UnityEngine.InputSystem.Pointer.current;
+            if(selectedTeamId!=null&&!detailOverlay&&!focus&&Time.frameCount!=selectionFrame&&pointer!=null&&pointer.press.wasPressedThisFrame)
+            {
+                var canvas=root.GetComponent<Canvas>();var cam=canvas.renderMode==RenderMode.ScreenSpaceOverlay?null:canvas.worldCamera;
+                if(!RectTransformUtility.RectangleContainsScreenPoint(right,pointer.position.ReadValue(),cam))ShowTeam(null,null,false);
+            }
         }
         CardView CreateCard(Card data,int rank,bool animate)
         {
@@ -239,7 +256,7 @@ namespace QuestBridge
         static void Clear(Transform p){foreach(Transform child in p){child.gameObject.SetActive(false);Destroy(child.gameObject);}}
         void ShowTeam(Team team,Card card,bool animate)
         {
-            Clear(right);selectedTeamId=team?.id;selectedCardId=card?.id;lastTeamFingerprint=JsonUtility.ToJson(team)+JsonUtility.ToJson(card);Text(right,"Команда",.015f,.929f,.75f,.054f,23,true);
+            Clear(right);selectedTeamId=team?.id;selectedCardId=card?.id;selectionFrame=Time.frameCount;lastTeamFingerprint=JsonUtility.ToJson(team)+JsonUtility.ToJson(card);Text(right,"Команда",.015f,.929f,.75f,.054f,23,true);
             if(team==null)
             {
                 var art=Surface(right,"Team preview",.02f,.57f,.96f,.28f,Paper);Avatar(art,new Team{id="a",initials="TF"},.35f,.57f,74).anchoredPosition=new Vector2(-24,10);Avatar(art,new Team{id="b",initials="DP"},.56f,.39f,65).anchoredPosition=new Vector2(12,-7);Avatar(art,new Team{id="c",initials="NS"},.26f,.25f,57);
@@ -254,13 +271,17 @@ namespace QuestBridge
         IEnumerator RevealProfile(){for(float t=0;t<.25f;t+=Time.unscaledDeltaTime){right.localScale=Vector3.Lerp(Vector3.one*.975f,Vector3.one,Mathf.SmoothStep(0,1,t/.25f));yield return null;}right.localScale=Vector3.one;}
         void OpenDetails(Card card)
         {
-            if(detailOverlay)Destroy(detailOverlay.gameObject);detailOverlay=Surface(root,"Task detail",0,0,1,1,new Color(.06f,.10f,.15f,.32f),false,true);var pane=Surface(detailOverlay,"Detail pane",.24f,.14f,.52f,.72f,Color.white);
-            Text(pane,(card.category??"Задача").ToUpperInvariant(),.07f,.85f,.73f,.05f,13,true,Muted);Text(pane,card.title,.07f,.65f,.76f,.18f,35,true);Button(pane,"×",.88f,.85f,.07f,.065f,()=>{Destroy(detailOverlay.gameObject);detailOverlay=null;},Paper);
+            CloseDetails();detailOverlay=Rect(root,"Task detail",0,0,1,1);
+            var backdrop=Surface(detailOverlay,"Dismiss backdrop",0,0,1,1,new Color(.06f,.10f,.15f,.32f),false,true);
+            var dismiss=backdrop.gameObject.AddComponent<UnityEngine.UI.Button>();dismiss.targetGraphic=backdrop.GetComponent<UnityEngine.UI.Image>();dismiss.transition=UnityEngine.UI.Selectable.Transition.None;dismiss.onClick.AddListener(CloseDetails);
+            var pane=Surface(detailOverlay,"Detail pane",.24f,.14f,.52f,.72f,Color.white,true,true);
+            Text(pane,(card.category??"Задача").ToUpperInvariant(),.07f,.85f,.73f,.05f,13,true,Muted);Text(pane,card.title,.07f,.65f,.76f,.18f,35,true);Button(pane,"×",.88f,.85f,.07f,.065f,CloseDetails,Paper);
             var body=CreateScroll(pane,"Description",.07f,.31f,.86f,.31f,out var bodyScroll);var description=Text(body,card.description,0,0,1,1,22);description.verticalAlignment=VerticalAlignmentOptions.Top;description.overflowMode=TextOverflowModes.Overflow;
             Canvas.ForceUpdateCanvases();body.sizeDelta=new Vector2(0,Mathf.Max(150,description.GetPreferredValues(card.description,bodyScroll.viewport.rect.width,0).y+24));Surface(pane,"Rule",.07f,.27f,.86f,.002f,Line,false);
             Text(pane,card.readiness+" / 100",.07f,.14f,.42f,.10f,34,true);Text(pane,"Готовность",.07f,.09f,.42f,.045f,14,false,Muted);Text(pane,card.clarity.ToString("0.0")+" / 10",.55f,.14f,.38f,.10f,34,true);Text(pane,"Ясность по оценке ИИ",.55f,.09f,.38f,.045f,14,false,Muted);
             StartCoroutine(FadeBubble(pane.gameObject.AddComponent<CanvasGroup>()));
         }
+        void CloseDetails(){if(!detailOverlay)return;detailOverlay.gameObject.SetActive(false);Destroy(detailOverlay.gameObject);detailOverlay=null;}
         void Notify(string message){activityText.text=message;toastText.text=message;toastUntil=Time.unscaledTime+3.7f;}
         void AddMessage(string message,bool user,bool animate=true)
         {

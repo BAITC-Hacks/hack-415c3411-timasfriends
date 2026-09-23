@@ -13,6 +13,19 @@ public static class ShowPreview
         var field=typeof(QuestBridge.QuestBridgeApp).GetField("activityText",BindingFlags.Instance|BindingFlags.NonPublic);
         if(app&&field.GetValue(app) is TMPro.TMP_Text text)text.text="Готовность задачи определяет её место";
         var gameType=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetType("UnityEditor.GameView")).FirstOrDefault(t=>t!=null);
-        if(gameType!=null){var view=UnityEditor.EditorWindow.GetWindow(gameType);view.Show();view.Focus();}
+        if(gameType!=null)
+        {
+            var view=UnityEditor.EditorWindow.GetWindow(gameType);view.Show();view.maximized=true;view.Focus();
+            var flags=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
+            gameType.GetProperty("lowResolutionForAspectRatios",flags)?.SetValue(view,false);
+            var zoom=gameType.GetField("m_ZoomArea",flags)?.GetValue(view);
+            if(zoom!=null)
+            {
+                var scale=gameType.GetProperty("minScale",flags)?.GetValue(view);
+                float nativeScale=scale is float f?f:1;
+                zoom.GetType().GetMethod("SetScaleFocused",flags,null,new[]{typeof(Vector2),typeof(Vector2)},null)?.Invoke(zoom,new object[]{Vector2.zero,Vector2.one*nativeScale});
+            }
+            view.Repaint();
+        }
     }
 }
