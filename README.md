@@ -4,39 +4,128 @@
 
 **Стек:** Unity **6000.3.7f1**, uGUI / TextMeshPro, WebGL; Python **3.12 или 3.13**, FastAPI, Pydantic, SQLite. Интерфейс рассчитан на настольный браузер в горизонтальном окне.
 
-## Быстрый запуск без AI-ключей
+## Запуск для жюри
 
-Команды выполняются из корня репозитория. Нужны Unity с модулем **WebGL Build Support**, Python и доступ к загрузке зависимостей для первой установки.
+Для демонстрации **AI-ключ не обязателен**: backend поддерживает пошаговый чат, публикацию задач, отклики и начисление опыта без внешнего AI. Для первого скачивания зависимостей нужен интернет. SQLite и демонстрационные данные создаются автоматически; отдельный сервер базы данных устанавливать не нужно.
 
-### 1. Сервер
+Ниже — команды для **Windows / PowerShell**. Вариант для Linux/macOS приведён после шага 5.
 
-Windows / PowerShell:
+### 1. Подготовьте Python и проект
+
+Установите **Python 3.12 или 3.13**. В новом окне PowerShell проверьте установленную версию:
 
 ```powershell
-py -3 -m venv backend/.venv
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
-backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+py -3.12 --version
 ```
 
-Linux/macOS: `python3 -m venv backend/.venv` и `backend/.venv/bin/python` в последующих командах. Подробнее: [backend/README.md](backend/README.md).
+Если установлен Python 3.13, здесь и при создании окружения используйте `py -3.13`.
 
-SQLite сохраняется в `backend/data/questbridge.sqlite3`. Первый запуск создаёт пять черновиков, пять опубликованных задач, пять команд и пять откликов, отмеченных как примеры. `/health` сообщает состояние; `/docs` показывает контракт API.
+Получите проект через Git:
 
-### 2. Unity
+```powershell
+git clone https://github.com/BAITC-Hacks/hack-415c3411-timasfriends.git QuestBridge
+cd QuestBridge
+```
 
-Откройте репозиторий через Unity Hub, сцену **`Assets/QuestBridge/QuestBridge.unity`**, нажмите **Play**. На объекте QuestBridge указан `Server Url`: `http://127.0.0.1:8000`.
+Можно скачать ZIP репозитория и распаковать его. Если проект уже скачан, откройте PowerShell в его папке. **Все дальнейшие команды выполняйте из корня проекта**, где находятся `README.md`, `backend/` и `Assets/`.
 
-Выберите **«Я бизнес»** или **«Я команда»**. Бизнес использует профиль `business-demo`; команда выбирается из пяти готовых профилей. Роль переключается в шапке. Это демонстрационные профили; полноценная авторизация в MVP не реализована.
+### 2. Создайте окружение и установите зависимости
 
-### 3. Браузер
+При первом запуске создайте окружение:
 
-Выйдите из Play, выберите **QuestBridge → Build Web Preview**. Результат: `Builds/WebGL` (бинарная сборка игнорируется Git). Затем в отдельном терминале:
+```powershell
+py -3.12 -m venv backend/.venv
+```
+
+Если `backend/.venv` уже существует, повторное создание пропустите. Установите зависимости backend:
+
+```powershell
+backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+```
+
+Активировать окружение не требуется: команды обращаются к его Python напрямую. Зависимости для тестов устанавливать для демонстрации не нужно.
+
+### 3. Создайте файл настроек
+
+Команда создаст `backend/.env`, если этого файла ещё нет:
+
+```powershell
+if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
+```
+
+Для запуска без AI оставьте `OPENAI_API_KEY` и `AI_MODEL` пустыми. Сохраните `SEED_DEMO=true`, чтобы появились готовые примеры. Остальные значения можно оставить из шаблона.
+
+Чтобы подключить живой AI, заполните `OPENAI_API_KEY` и `AI_MODEL` в **`backend/.env`** и перезапустите backend той же командой ниже. Подробности настройки — в [backend/README.md](backend/README.md#включение-ai).
+
+### 4. Запустите backend
+
+```powershell
+backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --env-file backend/.env
+```
+
+Дождитесь сообщений `Application startup complete` и `Uvicorn running on http://127.0.0.1:8000`. **Оставьте этот терминал открытым** на время демонстрации. `--env-file backend/.env` загружает созданные настройки.
+
+Для остановки нажмите **Ctrl+C**. При следующем запуске достаточно открыть терминал в корне проекта и повторить команду этого шага. SQLite сохраняется в `backend/data/questbridge.sqlite3`; задачи и опыт остаются после перезапуска.
+
+### 5. Убедитесь, что backend доступен
+
+Откройте в браузере:
+
+- [Состояние сервера — /health](http://127.0.0.1:8000/health). Без AI-ключа ожидается:
+
+  ```json
+  {"status":"ok","service":"questbridge","aiMode":"fallback","demo":true}
+  ```
+
+- [Каталог — /api/catalog](http://127.0.0.1:8000/api/catalog): JSON с карточками задач и командами. В новой базе создаются пять демонстрационных задач и пять команд.
+- [Документация API — /docs](http://127.0.0.1:8000/docs): список методов и форм для отправки запросов.
+
+`fallback` — ожидаемый режим без внешнего AI. Окно проекта открывается через Unity или браузер по шагам 6–7; страница `/docs` предназначена для просмотра API.
+
+#### Запуск backend на Linux и macOS
+
+Из корня скачанного проекта, с установленным Python 3.12:
+
+```bash
+python3.12 -m venv backend/.venv
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
+if [ ! -f backend/.env ]; then cp backend/.env.example backend/.env; fi
+backend/.venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --env-file backend/.env
+```
+
+Для Python 3.13 замените `python3.12` на `python3.13`. Если окружение уже создано, первую команду пропустите. Настройки и адреса проверки совпадают с шагами 3–5.
+
+### 6. Откройте проект в Unity
+
+Установите **Unity 6000.3.7f1** через Unity Hub. Добавьте в Hub корневую папку проекта, откройте её и дождитесь импорта. Откройте сцену **`Assets/QuestBridge/QuestBridge.unity`**. На объекте QuestBridge в компоненте `QuestBridgeApp` задайте **Server Url = `http://127.0.0.1:8000`** без `/api` в конце и нажмите **Play**.
+
+Выберите **«Я бизнес»** или **«Я команда»**. Бизнес использует профиль `business-demo`; команда выбирается из пяти готовых профилей. Роль переключается в шапке. Это демонстрационные профили; полноценная авторизация в MVP не реализована. Сценарий показа приведён в следующем разделе.
+
+### 7. Для показа в браузере соберите WebGL
+
+Для этой версии Unity установите модуль **WebGL Build Support**. Выйдите из Play, выберите **QuestBridge → Build Web Preview** и дождитесь успешной сборки в `Builds/WebGL`. Готовые файлы сборки не входят в Git.
+
+Оставьте backend работающим. Во **втором терминале**, также из корня проекта, запустите:
 
 ```powershell
 backend/.venv/Scripts/python.exe scripts/serve_web.py
 ```
 
-Откройте **http://localhost:8080/**. Страница занимает всё окно, сервер предпросмотра отдаёт сборку и проксирует API к порту 8000. [Инструкция по сборке, HTTPS и внешнему API](docs/WEBGL.md).
+На Linux/macOS: `backend/.venv/bin/python scripts/serve_web.py`.
+
+Откройте **http://localhost:8080/**. Сервер предпросмотра отдаёт сборку и перенаправляет API-запросы в backend на порту 8000. Во время показа оба терминала должны оставаться открытыми. [Подробная инструкция WebGL](docs/WEBGL.md).
+
+### Если запуск не получается
+
+| Сообщение или симптом | Что сделать |
+| --- | --- |
+| `py` не найден или нет Python 3.12 | Установите Python 3.12/3.13 и откройте новый терминал. Для установленного 3.13 используйте `py -3.13`. |
+| `No module named backend` или не найден `requirements.txt` | Перейдите в корень проекта с папками `backend/` и `Assets/`, затем повторите команду. |
+| Не найден `backend/.venv/Scripts/python.exe` | Выполните создание окружения из шага 2. На Linux/macOS используйте путь `backend/.venv/bin/python`. |
+| `Permission denied` при повторном создании `.venv` | Остановите работающий backend через Ctrl+C. Если окружение уже создано, переходите к установке зависимостей и запуску. |
+| Порт 8000 занят (`WinError 10048` / `Address already in use`) | Остановите ранее запущенный экземпляр backend через Ctrl+C в его терминале и повторите запуск. |
+| Unity показывает отсутствие связи | Проверьте `/health`, работающий терминал backend и `Server Url = http://127.0.0.1:8000`. |
+| На странице предпросмотра отсутствует сборка | Сначала выполните `QuestBridge → Build Web Preview`; затем открывайте `http://localhost:8080/`. |
 
 ## Основной сценарий — до пяти минут
 
