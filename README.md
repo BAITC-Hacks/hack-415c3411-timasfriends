@@ -29,3 +29,7 @@ Proposed server formula: context 10, need 10, data 20, expected result 15, succe
 ## Verification
 
 `AgentScripts/VerifyExperience.cs` runs through Unity Pipeline in Play mode. It checks stable buttons on repeated snapshots, retained scroll position, invalid response rejection, score ordering, avatar selection and loaded audio. Visual inspection is also performed in Game view. A real backend and WebGL browser deployment are not yet verified.
+
+## Бизнес-задачи от Claude
+
+[Бизнес-задачи AI Sana от Claude (DOCX)](docs/biznes-zadachi-AI-Sana.docx) — документ, предоставленный участником команды; источник указан с его слов. Исходный файл добавлен без изменений.
