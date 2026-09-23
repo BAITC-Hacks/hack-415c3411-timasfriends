@@ -23,3 +23,14 @@ Recordings/
 .env
 .env.*
 !.env.example
+
+# Local Python backend state and environments
+backend/.venv/
+backend/data/
+__pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+*.py[cod]
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
