@@ -1,56 +1,95 @@
 # QuestBridge — TimasFriends
 
-Unity 6000.3.7f1. Target: browser via WebGL.
+Каталог бизнес-задач для студенческих команд. Бизнес описывает проблему, уточняет сведения с помощником, редактирует карточку и подтверждает публикацию. Команда выбирает задачу и предлагает решение; бизнес вручную принимает или отклоняет предложение.
 
-WebGL support is installed and the working Editor has been switched to WebGL. The build scene list starts with `Assets/QuestBridge/QuestBridge.unity`; default Web canvas size is 1600×900. This configures the target, but is not a completed browser build.
+**Стек:** Unity **6000.3.7f1**, uGUI / TextMeshPro, WebGL; Python **3.12 или 3.13**, FastAPI, Pydantic, SQLite. Интерфейс рассчитан на настольный браузер в горизонтальном окне.
 
-## Run the first UI prototype
+## Быстрый запуск без AI-ключей
 
-Open this repository as a Unity project. Open `Assets/QuestBridge/QuestBridge.unity` and press Play. The interface is created at runtime by `QuestBridgeApp`. No API keys are required.
+Команды выполняются из корня репозитория. Нужны Unity с модулем **WebGL Build Support**, Python и доступ к загрузке зависимостей для первой установки.
 
-Try scrolling the central catalog, selecting a round team avatar, opening a task, filtering categories, toggling focus and sound, and sending a draft. **Демо** is available with or without a server and starts a labelled, local stream of sample leader changes every five seconds; **Выйти** restores the latest server catalog (or previous offline catalog) and filter. Simulation never publishes tasks or changes server scores; the chat remains connected to the configured server. Cards animate position and score changes; unchanged server snapshots keep their buttons and scroll position. Sound starts quietly enabled and remembers your mute preference. Focus uses a soft white veil, not a GPU blur; it suppresses sound and dims team details. The UI targets desktop landscape; WebGL build and browser verification are pending.
+### 1. Сервер
 
-The screen uses a single header with a bridge mark, one connection status, and three aligned columns. **Сначала** starts a new conversation without deleting server history. Chat bubbles resize with the viewport; long incoming replies open at their beginning. Example cards carry **Пример** and show **полнота** as a percentage: the prefilled SAT example starts at 100 because its weighted fields are filled and confirmed. That value is unrelated to the user's chat. The fallback assistant uses short questions and the visible label **Без ИИ · пошаговый режим**; drafts are not published automatically.
-
-Exit focus with the large **Вернуться в каталог** button beneath the center message. Click the dimmed background to close a task detail window; clicks inside it do not close it. Click outside the team panel to dismiss its selection. Escape closes the top detail window, then focus, then the team selection.
-
-The multiline composer shows a blinking dark caret and blue text selection, keeps text visible while editing, and supports native clipboard shortcuts. Clicking an already selected team preserves its panel; outside dismissal happens on a completed click and ignores drags. Without AI, the server asks its initial questions once: after the follow-up it saves the draft without another question loop. Replies may use field labels or `1. …`, `2. …`, `3. …` matching the initial questions; unknown values stay empty.
-
-For sharp text in Game view, disable **Low Resolution Aspect Ratios**, use native scale **1x**, and expand the Game view. `AgentScripts/ShowPreview.cs` applies these Editor-only preview settings. The UI canvas uses pixel-perfect positioning and scales with screen height so labels retain their line height in wide windows. The generated font retains its 90-point SDF source sampling.
-
-## Server integration
-
-The FastAPI + Pydantic + SQLite backend is implemented in [`backend/`](backend/README.md). From the repository root (Python 3.12):
+Windows / PowerShell:
 
 ```powershell
-py -3.12 -m venv backend/.venv
+py -3 -m venv backend/.venv
 backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
 backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Use `http://127.0.0.1:8000` as **Server Url** for local Unity Play mode. Health: `/health`; API documentation: `/docs`. No key is needed: chat and clarity explicitly report `aiMode: "fallback"`. The first start seeds five synthetic drafts, five published tasks, five teams and five proposals, all labelled demo. SQLite data persists in `backend/data/questbridge.sqlite3`.
+Linux/macOS: `python3 -m venv backend/.venv` и `backend/.venv/bin/python` в последующих командах. Подробнее: [backend/README.md](backend/README.md).
 
-Set **Server Url** on the QuestBridge object before entering Play (restart Play after changing it). Empty = offline demo. The client currently supports GET `/api/catalog` and POST `/api/chat`. Catalog request starts are scheduled five seconds apart; slow requests never overlap. Invalid snapshots are rejected before altering visible data. Chat keeps message history in the current session; input is locked during sending and preserved on error. AI fallback provides fixed questions and is explicitly labelled.
+SQLite сохраняется в `backend/data/questbridge.sqlite3`. Первый запуск создаёт пять черновиков, пять опубликованных задач, пять команд и пять откликов, отмеченных как примеры. `/health` сообщает состояние; `/docs` показывает контракт API.
 
-[API notes](docs/API.md) distinguish the current client integration from the implemented server endpoints. Publication, versioned edits, proposals, manual team decisions, milestones and events are available on the backend; their Unity controls and chat history across app restarts are subsequent slices. [The original backend specification](docs/BACKEND_AGENT_PROMPT.md) is retained for reference.
+### 2. Unity
 
-API keys belong only in server environment variables. [`backend/.env.example`](backend/.env.example) documents `OPENAI_API_KEY`, `AI_MODEL` and exact `CORS_ORIGINS`; both AI variables must be set to enable live AI. `.env` files are ignored. An HTTPS WebGL page requires HTTPS API and CORS configuration. Demo profile IDs are not account authentication; the explicitly named `demo-business` scope is only a local prototype convention.
+Откройте репозиторий через Unity Hub, сцену **`Assets/QuestBridge/QuestBridge.unity`**, нажмите **Play**. На объекте QuestBridge указан `Server Url`: `http://127.0.0.1:8000`.
 
-## Rating and catalog rules
+Выберите **«Я бизнес»** или **«Я команда»**. Бизнес использует профиль `business-demo`; команда выбирается из пяти готовых профилей. Роль переключается в шапке. Это демонстрационные профили; полноценная авторизация в MVP не реализована.
 
-Implemented server formula: context 10, need 10, data 20, expected result 15, success criteria 15, constraints 10, users 10, contact 4, interaction format 3, feedback process 3. Only filled and confirmed fields count. Readiness stays 0–100; separate AI clarity 0–10 breaks ties, then stable id breaks remaining ties. This measures completeness, not truth. Low readiness does not block publication or proposals. Teams are always selected manually; a confirmed milestone earns 10 experience points once.
+### 3. Браузер
+
+Выйдите из Play, выберите **QuestBridge → Build Web Preview**. Результат: `Builds/WebGL` (бинарная сборка игнорируется Git). Затем в отдельном терминале:
+
+```powershell
+backend/.venv/Scripts/python.exe scripts/serve_web.py
+```
+
+Откройте **http://localhost:8080/**. Страница занимает всё окно, сервер предпросмотра отдаёт сборку и проксирует API к порту 8000. [Инструкция по сборке, HTTPS и внешнему API](docs/WEBGL.md).
+
+## Основной сценарий — до пяти минут
+
+1. **Бизнес:** введите «В учебном центре преподаватели долго проверяют пробные SAT». Ответьте на три вопроса. В fallback используйте нумерованные ответы `1. …`, `2. …`, `3. …`, соответствующие показанным вопросам.
+2. Нажмите **«Карточка →»**. Дополните название, тему и известные сведения. Справа видны потенциальная оценка после подтверждения и вклад каждого поля. Неизвестные поля остаются пустыми.
+3. **«Подтверждаю сведения» → «Опубликовать»**. Задача появляется в каталоге. Её можно открыть и отредактировать с повторным подтверждением. Низкая оценка не запрещает публикацию.
+4. Во втором окне выберите **«Я команда»**, профиль и опубликованную задачу. Откройте отклики, нажмите **«Предложить решение»**, заполните идею, план, срок и HTTP(S)-ссылку на прототип или проект.
+5. Бизнес открывает **«Предложения команд» → «Подробнее»**, выбирает или отклоняет команду. Можно выбрать несколько. Решения обновляются примерно каждые пять секунд.
+6. Выбранная команда открывает **«Этапы работы»** и описывает результат. Бизнес открывает этапы того же предложения и подтверждает выполненное. Сервер однократно начисляет 10 опыта и один завершённый этап.
+
+Материалы: [бизнес-кейсы](docs/01-business-tasks.md), [чек-лист ожидаемого поведения](docs/03-checklist.md). Наличие пункта в чек-листе не означает, что он уже проверен.
+
+## Интерфейс
+
+- **Бизнес:** чат, общий каталог / «Мои задачи», профили команд. Редактор, полная карточка, рейтинг и предложения открываются поверх каталога.
+- **Команда:** навигация по каталогу и своим откликам, расширенный каталог, профили участников. Чат бизнеса скрыт.
+- Фильтры темы и готовности; сортировка по рейтингу. Полные карточки, отклики и этапы загружаются с сервера.
+- Черновик и ручные исправления сохраняются локально в PlayerPrefs. Ответы помощника не стирают вручную изменённые поля. История чата показывается в текущей сессии; её восстановление после перезапуска пока отсутствует.
+- **Демо** запускает помеченную локальную анимацию рейтинга. **Выйти** возвращает серверный каталог. Симуляция не публикует задачи и не меняет серверные оценки; для реальной работы выйдите из симуляции.
+- **Фокус** скрывает каталог светлой подложкой и приглушает события. Большая кнопка возвращает каталог. Клик по фону / Escape закрывает окно.
+- Game view для чёткого текста: 1x, Low Resolution Aspect Ratios выключен. Звук тихий, настройка запоминается.
+
+## Архитектура и AI
+
+`Unity WebGL → HTTP JSON API → FastAPI → SQLite / AI provider`.
+
+Клиент: `QuestBridgeApp.cs` — каталог и чат, `QuestBridgeWorkflow.cs` — роли и карточка, `QuestBridgeProposals.cs` — отклики и этапы, `QuestBridgeContracts.cs` — DTO. Сервер: `backend/app`, схемы `models.py`, рейтинг `scoring.py`, AI `ai.py`. [Контракт API](docs/API.md).
+
+Без ключа работает **«Без ИИ · пошаговый режим»**: фиксированные вопросы и извлечение явно отмеченных ответов. Для полного сценария нужен локальный backend; внешний AI и личная подписка не требуются. Пустой Server Url / `?offline=1` дают просмотр локальных примеров и черновик без серверных публикаций.
+
+Живой AI включается на сервере через **`OPENAI_API_KEY` и `AI_MODEL`** из `backend/.env.example`. Ключи не входят в Unity, WebGL или Git. Промпты и обработка невалидного ответа находятся в `backend/prompts/` и `backend/app/ai.py`. При ошибке используется fallback. Извлечение ограничено подтверждаемыми фрагментами пользовательских сообщений; неизвестные данные не додумываются.
+
+## Формула рейтинга
+
+Контекст 10 + потребность 10 + данные 20 + результат 15 + критерии успеха 15 + ограничения 10 + пользователи 10 + контакт 4 + формат взаимодействия 3 + обратная связь 3 = **100**.
+
+Учитываются заполненные и подтверждённые поля. Заглушки вроде «не знаю» и «данных нет» не дают баллы. Оценка показывает полноту, а не достоверность или ценность задачи. Предпросмотр явно показывает потенциальный результат **после подтверждения**.
+
+Уровни: 0–39 — черновик, 40–69 — рабочая, 70–89 — готовая, 90–100 — приоритетная. Все опубликованные задачи доступны для отклика. Отдельная AI-ясность 0–10 разрешает равенство основной оценки; далее используется стабильный ID. AI не назначает команды.
+
+## Состояние проверки и ограничения
+
+Интеграция компилируется в Unity без ошибок Console; выбор роли и редактор просмотрены в Game view. Полный новый сценарий публикации, отклика и подтверждения этапа пока не проверен вручную. Автоматические тесты в этом проходе не запускались. Живой AI и публичное HTTPS-развёртывание требуют настройки; состояние браузерной сборки — в [docs/WEBGL.md](docs/WEBGL.md).
+
+Scope API предназначены для демонстрации на синтетических данных. Для настоящих закрытых задач потребуется серверная авторизация. SQLite при размещении должен находиться на постоянном диске. Детали откликов доступны автору, владельцу задачи либо всем при согласии автора.
 
 ## Third-party
 
-- Unity packages are listed in `Packages/manifest.json` and locked in `Packages/packages-lock.json`.
-- Noto Sans Regular: https://github.com/notofonts/noto-fonts, SIL Open Font License; bundled license in `Assets/QuestBridge/Resources/OFL.txt`. Used for Cyrillic text.
-- Kenney Interface Sounds (CC0): four small OGG clips for click, open, rise and leader feedback. [Source, license and file mapping](docs/THIRD_PARTY_AUDIO.md); original license bundled with audio.
-- Backend: FastAPI 0.115.12, Pydantic 2.11.7, Uvicorn 0.34.3, HTTPX 0.28.1, python-dotenv 1.1.1; tests use pytest 8.4.1. [Backend Third-party notes](backend/README.md#third-party) include licenses and upstream links. SQLite is provided by Python's standard library.
+- Unity packages: `Packages/manifest.json`, `Packages/packages-lock.json`.
+- Noto Sans Regular — [источник](https://github.com/notofonts/noto-fonts), SIL Open Font License; `Assets/QuestBridge/Resources/OFL.txt`.
+- Kenney Interface Sounds, CC0: [происхождение файлов](docs/THIRD_PARTY_AUDIO.md). Четыре коротких звука интерфейса.
+- FastAPI 0.115.12, Pydantic 2.11.7, Uvicorn 0.34.3, HTTPX 0.28.1, python-dotenv 1.1.1; существующие тесты используют pytest 8.4.1. [Лицензии backend](backend/README.md#third-party). SQLite и сервер предпросмотра используют стандартную библиотеку Python.
 
-## Verification
+## Материалы команды
 
-`AgentScripts/VerifyExperience.cs` runs through Unity Pipeline in Play mode. It checks stable buttons on repeated snapshots, retained scroll position, invalid response rejection, score ordering, avatar selection and loaded audio. Visual inspection is also performed in Game view. The local backend has been connected to Unity: five server cards and teams loaded, and a chat request received a fallback reply. The current redesign compiles with no Console errors and has been visually reviewed in Game view. WebGL browser deployment and live AI calls have not yet been verified.
-
-## Бизнес-задачи от Claude
-
-[Бизнес-задачи AI Sana от Claude (DOCX)](docs/biznes-zadachi-AI-Sana.docx) — документ, предоставленный участником команды; источник указан с его слов. Исходный файл добавлен без изменений.
+[Бизнес-задачи AI Sana от Claude (DOCX)](docs/biznes-zadachi-AI-Sana.docx) — документ участника команды; источник указан с его слов. Исходный файл сохранён без изменений.

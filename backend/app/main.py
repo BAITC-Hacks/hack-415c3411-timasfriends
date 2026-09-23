@@ -18,7 +18,7 @@ from .db import Database, add_event, dumps, new_id, utc_now
 from .models import (
     CatalogCard, CatalogResponse, ChatRequest, ChatResponse, ConfirmMilestoneRequest,
     DecisionRequest, Draft, ErrorBody, ErrorResponse, Event, EventsResponse, FieldSource,
-    HealthResponse, MilestoneRequest, MilestoneResponse, PreviewRequest, PreviewResponse,
+    HealthResponse, MilestoneListResponse, MilestoneRequest, MilestoneResponse, PreviewRequest, PreviewResponse,
     ProposalDetails, ProposalListResponse, ProposalRequest, ProposalResponse,
     PublishTaskRequest, TaskResponse, Team, UpdateTaskRequest,
 )
@@ -214,7 +214,7 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
                 tasks = [task for task in tasks if task.readinessLevel == readinessLevel]
             tasks.sort(key=lambda task: (-task.readiness, -task.clarity, task.id))
             teams = [team_response(conn, row["id"]) for row in conn.execute("SELECT id FROM teams ORDER BY id").fetchall()]
-            cards = [CatalogCard(id=t.id, title=t.draft.title, description=t.draft.need or t.draft.context,
+            cards = [CatalogCard(id=t.id, businessId=t.businessId, title=t.draft.title, description=t.draft.need or t.draft.context,
                                  category=t.draft.category, readiness=t.readiness, clarity=t.clarity, teamIds=t.teamIds,
                                  demo=t.demo) for t in tasks]
             return CatalogResponse(version=version, cards=cards, teams=teams)
@@ -337,15 +337,30 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             return proposal_response(conn, proposal_id, business_view=True)
 
     @app.get("/api/tasks/{task_id}/proposals", response_model=ProposalListResponse)
-    def list_proposals(task_id: Identifier, scope: Literal["public", "demo-business"] = "public", businessId: Annotated[str | None, Query(max_length=80)] = None):
+    def list_proposals(
+        task_id: Identifier,
+        scope: Literal["public", "demo-business", "demo-team"] = "public",
+        businessId: Annotated[str | None, Query(max_length=80)] = None,
+        teamId: Annotated[str | None, Query(max_length=80)] = None,
+    ):
         with db.read() as conn:
             task_row = require_row(conn, "tasks", task_id)
             if scope == "demo-business":
                 if not businessId:
                     raise APIError(422, "business_required", "Демонстрационное бизнес-представление требует businessId.")
                 check_owner(conn, task_row, businessId)
-            rows = conn.execute("SELECT id FROM proposals WHERE task_id=? ORDER BY created_at,id", (task_id,)).fetchall()
-            return ProposalListResponse(proposals=[proposal_response(conn, row["id"], scope == "demo-business") for row in rows])
+            elif scope == "demo-team":
+                if not teamId:
+                    raise APIError(422, "team_required", "Демонстрационное представление команды требует teamId.")
+                require_row(conn, "teams", teamId)
+            rows = conn.execute("SELECT id,team_id FROM proposals WHERE task_id=? ORDER BY created_at,id", (task_id,)).fetchall()
+            return ProposalListResponse(proposals=[
+                proposal_response(
+                    conn, row["id"],
+                    business_view=scope == "demo-business" or (scope == "demo-team" and row["team_id"] == teamId),
+                )
+                for row in rows
+            ])
 
     @app.patch("/api/proposals/{proposal_id}/decision", response_model=ProposalResponse)
     def decide(proposal_id: Identifier, body: DecisionRequest):
@@ -374,6 +389,30 @@ def create_app(settings: Settings | None = None, ai_service: AIService | None = 
             conn.execute("INSERT INTO milestones(id,proposal_id,description,created_at) VALUES (?,?,?,?)",
                          (milestone_id, proposal_id, body.description, utc_now()))
             return milestone_response(conn, milestone_id)
+
+    @app.get("/api/proposals/{proposal_id}/milestones", response_model=MilestoneListResponse)
+    def list_milestones(
+        proposal_id: Identifier,
+        scope: Literal["demo-business", "demo-team"] = "demo-business",
+        businessId: Annotated[str | None, Query(max_length=80)] = None,
+        teamId: Annotated[str | None, Query(max_length=80)] = None,
+    ):
+        with db.read() as conn:
+            proposal = require_row(conn, "proposals", proposal_id)
+            if scope == "demo-business":
+                if not businessId:
+                    raise APIError(422, "business_required", "Демонстрационное бизнес-представление требует businessId.")
+                check_owner(conn, require_row(conn, "tasks", proposal["task_id"]), businessId)
+            else:
+                if not teamId:
+                    raise APIError(422, "team_required", "Демонстрационное представление команды требует teamId.")
+                require_row(conn, "teams", teamId)
+                if proposal["team_id"] != teamId:
+                    raise APIError(403, "team_mismatch", "Этапы доступны только команде этого предложения.")
+            rows = conn.execute(
+                "SELECT id FROM milestones WHERE proposal_id=? ORDER BY created_at,id", (proposal_id,)
+            ).fetchall()
+            return MilestoneListResponse(milestones=[milestone_response(conn, row["id"]) for row in rows])
 
     @app.post("/api/milestones/{milestone_id}/confirm", response_model=MilestoneResponse)
     def confirm_milestone(milestone_id: Identifier, body: ConfirmMilestoneRequest):

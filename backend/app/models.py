@@ -212,6 +212,7 @@ class Team(APIModel):
 
 class CatalogCard(APIModel):
     id: Identifier
+    businessId: Identifier
     title: Annotated[str, StringConstraints(min_length=1, max_length=160)]
     description: ShortText
     category: Annotated[str, StringConstraints(min_length=1, max_length=100)]
@@ -280,6 +281,10 @@ class MilestoneResponse(APIModel):
     createdAt: UTCDateTime
     confirmedAt: UTCDateTime | None
     team: Team
+
+
+class MilestoneListResponse(APIModel):
+    milestones: list[MilestoneResponse]
 
 
 class Event(APIModel):

@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; color: #172128; background: #fff; }
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+#app { position: relative; min-height: 100dvh; }
+#unity-canvas { display: block; width: 100%; height: 100%; background: #fff; outline: none; }
+#loading { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 32px; background: #fff; opacity: 1; transition: opacity 220ms ease; }
+#loading[hidden], [hidden] { display: none !important; }
+#loading.complete { opacity: 0; pointer-events: none; }
+.loading-card { width: min(100%, 330px); text-align: center; }
+.mark { width: 52px; height: 42px; margin-bottom: 22px; }
+h1 { margin: 0; font-size: 29px; font-weight: 600; letter-spacing: -.8px; }
+p { margin: 15px 0 30px; font-size: 15px; line-height: 1.6; color: #697680; }
+#progress { height: 4px; overflow: hidden; border-radius: 3px; background: #edf2f6; }
+#progress-fill { height: 100%; background: #93d4ff; transform: scaleX(0); transform-origin: left; transition: transform 180ms ease; }
+#progress-value { display: block; margin-top: 13px; font-size: 12px; font-variant-numeric: tabular-nums; color: #697680; }
+button { min-height: 44px; border: 0; border-radius: 10px; padding: 12px 20px; font: inherit; background: #172128; color: #fff; cursor: pointer; }
+button:focus-visible { outline: 3px solid #93d4ff; outline-offset: 4px; }
+button:hover { background: #2d414d; }
+noscript { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px; background: #fff; }
+@media (prefers-reduced-motion: reduce) { #loading, #progress-fill { transition: none; } }

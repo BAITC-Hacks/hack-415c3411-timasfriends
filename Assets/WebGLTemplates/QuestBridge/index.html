@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="QuestBridge — понятные задачи бизнеса и команды, готовые их решить.">
+  <title>QuestBridge</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="unity-canvas" width="1600" height="900" tabindex="0" aria-label="QuestBridge: задачи и команды"></canvas>
+    <section id="loading" aria-labelledby="brand">
+      <div class="loading-card">
+        <svg class="mark" viewBox="0 0 52 42" fill="none" aria-hidden="true">
+          <rect x="1" y="16" width="13" height="25" rx="4" fill="currentColor"/>
+          <rect x="19" y="1" width="13" height="40" rx="4" fill="currentColor"/>
+          <rect x="37" y="16" width="13" height="25" rx="4" fill="#99d5ff"/>
+        </svg>
+        <h1 id="brand">QuestBridge</h1>
+        <p id="loading-label" role="status">Открываем пространство задач</p>
+        <div id="progress" role="progressbar" aria-label="Загрузка приложения" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="progress-fill"></div>
+        </div>
+        <span id="progress-value" aria-hidden="true">0%</span>
+        <button id="retry" type="button" hidden>Попробовать снова</button>
+      </div>
+    </section>
+  </main>
+  <noscript>Для QuestBridge включите JavaScript в браузере.</noscript>
+  <script>
+    (() => {
+      "use strict";
+      const canvas = document.getElementById("unity-canvas");
+      const loading = document.getElementById("loading");
+      const label = document.getElementById("loading-label");
+      const progress = document.getElementById("progress");
+      const fill = document.getElementById("progress-fill");
+      const value = document.getElementById("progress-value");
+      const retry = document.getElementById("retry");
+      let startupFailed = false;
+      retry.addEventListener("click", () => window.location.reload());
+
+      function fail(error) {
+        startupFailed = true;
+        console.error("QuestBridge could not start:", error);
+        loading.classList.remove("complete");
+        loading.hidden = false;
+        label.textContent = "Не удалось открыть приложение. Проверьте соединение и попробуйте ещё раз.";
+        progress.hidden = true;
+        value.hidden = true;
+        retry.hidden = false;
+      }
+
+      let apiUrl;
+      try {
+        if (!/^https?:$/.test(window.location.protocol))
+          throw new Error("Open the build through an HTTP server, not file://.");
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("offline") === "1") {
+          apiUrl = "";
+        } else {
+          const parsed = new URL(params.get("api") || window.location.origin);
+          if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash)
+            throw new Error("The API address must be an HTTP(S) base URL without credentials, query or fragment.");
+          if (window.location.protocol === "https:" && parsed.protocol !== "https:")
+            throw new Error("An HTTPS page requires an HTTPS API address.");
+          apiUrl = parsed.href.replace(/\/+$/, "");
+        }
+      } catch (error) { fail(error); return; }
+
+      const config = {
+        dataUrl: "Build/{{{ DATA_FILENAME }}}",
+        frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+        codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#if MEMORY_FILENAME
+        memoryUrl: "Build/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+        symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "TimasFriends",
+        productName: "QuestBridge",
+        productVersion: "{{{ PRODUCT_VERSION }}}",
+        matchWebGLToCanvasSize: true,
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+        showBanner: (message, type) => {
+          if (type === "error") fail(message);
+          else console.warn(message);
+        }
+      };
+
+      const script = document.createElement("script");
+      script.src = "Build/{{{ LOADER_FILENAME }}}";
+      script.onerror = () => fail("Unity loader could not be downloaded.");
+      script.onload = () => {
+        createUnityInstance(canvas, config, fraction => {
+          const percent = Math.min(100, Math.round(fraction * 100));
+          fill.style.transform = "scaleX(" + percent / 100 + ")";
+          value.textContent = percent + "%";
+          progress.setAttribute("aria-valuenow", String(percent));
+          if (percent === 100) label.textContent = "Почти готово";
+        }).then(instance => {
+          if (startupFailed) return;
+          window.questBridgeInstance = instance;
+          // Let the first Unity frame create the scene objects before SendMessage.
+          window.requestAnimationFrame(() => {
+            try {
+              instance.SendMessage("QuestBridge", "ConfigureServer", apiUrl);
+              loading.classList.add("complete");
+              window.setTimeout(() => { loading.hidden = true; }, 240);
+              canvas.focus({ preventScroll: true });
+            } catch (error) { fail(error); }
+          });
+        }).catch(fail);
+      };
+      document.body.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

@@ -1,36 +1,111 @@
-# API integration
+﻿# Интеграция Unity и API
 
-Original specification: [BACKEND_AGENT_PROMPT.md](BACKEND_AGENT_PROMPT.md). The backend is implemented in [`backend/`](../backend/README.md); the Unity integration below remains limited to two endpoints.
+Исходное задание: [BACKEND_AGENT_PROMPT.md](BACKEND_AGENT_PROMPT.md). Backend и точные схемы описаны в [backend/README.md](../backend/README.md), OpenAPI доступен по `/openapi.json`. Клиент использует `QuestBridgeApp.cs`, `QuestBridgeWorkflow.cs`, `QuestBridgeContracts.cs` и `QuestBridgeProposals.cs`.
 
-The first Unity slice currently calls only:
-- GET `{serverUrl}/api/catalog`: `{cards:[{id,title,description,category,readiness,clarity,teamIds:[],demo:false}],teams:[{id,name,initials,stack,description,completed}]}`.
-- POST `{serverUrl}/api/chat`: `{conversationId,message}` -> `{conversationId,message}` (additional fields allowed).
+## Роли и сценарий
 
-Empty `serverUrl` means offline demo. Set it before entering Play and restart Play when switching servers. Catalog polling is sequential, with requests scheduled approximately five seconds apart and no overlap on slow responses. Timeout retains the last snapshot. Both card and team ids must be unique and nonempty; teamIds must resolve to teams in the same snapshot. Readiness is 0–100; clarity is finite 0–10. The client validates before applying and sorts readiness descending, clarity descending, id ascending.
+При запуске выбирается роль бизнеса или команды. Бизнес работает от `business-demo`; команда выбирает профиль `team-1` … `team-5`. Сервер также содержит `business-school`, но отдельного выбора бизнеса в интерфейсе сейчас нет.
 
-Each catalog card carries `demo` from its published task; the optional field defaults to `false` for older payloads. Seed cards have `demo:true`. Their readiness is calculated from prefilled and confirmed synthetic fields: the SAT example has all ten weighted fields and therefore starts at 100. Readiness describes card completeness, not an AI assessment of a chat message; chat does not publish or score a task.
+- **Бизнес:** чат → редактор карточки → расчёт → подтверждение → публикация; далее предложения, ручной выбор/отклонение и подтверждение выполненных этапов.
+- **Команда:** каталог без чата → полная задача → идея, план, срок и ссылка → статус решения → передача выполненного этапа.
+- Общий каталог доступен обеим ролям. «Мои задачи» использует `card.businessId`, «Мои отклики» — выбранный `teamId` в `card.teamIds`. Есть фильтры темы и четырёх уровней готовности.
 
-Chat responses require nonempty `conversationId` and `message`. Optional `aiMode: "fallback"` changes the assistant status to **Без ИИ · пошаговый режим**. Optional `phase: "draft_ready"` shows **Черновик не опубликован**; editing and publication remain a later slice. Input and conversation reset are locked during a request; errors preserve the submitted text. Chat history is displayed for the current app session. **Сначала** resets the client conversation ID; the next message starts a new server conversation and the previous history stays in SQLite.
+Это демонстрационные профили, а не регистрация или авторизация. Сервер проверяет существование профиля и принадлежность записей; знание чужого id позволяет переключиться на него. Используйте синтетические данные.
 
-API key belongs exclusively to server environment. Configure CORS for the WebGL host; serve API over HTTPS for an HTTPS-hosted client. Do not deploy a localhost URL for remote users.
+## Адрес сервера: Editor и WebGL
 
-## Local connection
+В Editor задайте **QuestBridgeApp → Server Url = `http://127.0.0.1:8000`** и запустите backend. Пустой адрес включает локальный каталог и пошаговый чат; публикация, отклики и этапы требуют backend. Backend без AI-ключа выполняет серверный сценарий в режиме `fallback`.
 
-Base URL: `http://127.0.0.1:8000`. Follow [server startup](../backend/README.md), then set **QuestBridgeApp → Server Url**. GET `/health` returns `{"status":"ok","service":"questbridge","aiMode":"fallback","demo":true}` when AI is not configured. GET `/api/catalog` includes a numeric `version`; team profiles additionally expose numeric `experience`.
+Публичный метод `ConfigureServer(string url)` меняет HTTP(S) base URL во время работы, сбрасывает привязку разговора и серверного каталога, затем запрашивает каталог. Для показа выберите один адрес перед началом сценария.
 
-POST `/api/chat` example: `{"conversationId":"","message":"Учителя долго проверяют пробные SAT"}`. A short initial description gets three questions. Reuse its returned `conversationId` with `{"conversationId":"<returned id>","message":"Не знаю"}` to obtain `phase:"draft_ready"` with empty unknown fields. An unknown nonempty conversation ID returns 404. The server stores conversation history; Unity sends only the next message. Additional response fields include `phase`, `aiMode`, `questions`, `draft`, `sources` and `missingFields`.
+Шаблон `Assets/WebGLTemplates/QuestBridge` передаёт адрес через `SendMessage("QuestBridge", "ConfigureServer", apiUrl)`:
 
-Fallback asks questions only on the first incomplete turn. Follow-ups keep `phase:"draft_ready"` and `questions:[]` without repeating missing-field questions in the message. The first follow-up also accepts numbered answers `1. …`, `2) …`, `3: …` when the stored initial assistant questions identify the fields exactly. Later explicit field labels update known values; unstructured additions stay in conversation history without guessed field assignments.
+- По умолчанию API на том же origin, что и страница сборки: `/api/...`.
+- `?api=https%3A%2F%2Fapi.example.com` задаёт отдельный сервер.
+- `?offline=1` запускает локальное демо без API.
 
-## Implemented server endpoints for the next Unity slice
+Открывайте сборку через HTTP(S), не `file://`. Для HTTPS-страницы нужен HTTPS API. При разных origins добавьте origin сайта в `CORS_ORIGINS`; origin включает протокол, хост и порт. `localhost` и `127.0.0.1` в опубликованной сборке обозначают компьютер посетителя. Ключ AI хранится только в окружении backend, никогда в Unity, URL или JavaScript.
 
-- POST `/api/tasks/preview`: deterministic readiness and ten score rows.
-- POST `/api/tasks`: explicit `confirmed:true`, required nonempty title/category, optional `Idempotency-Key` header.
-- GET/PATCH `/api/tasks/{id}`: complete card; PATCH requires `version` and the complete `draft`/`confirmedFields`. Include changed confirmed fields in `reconfirmedFields` or remove them from `confirmedFields`. Stale versions and missing fresh confirmations return 409.
-- POST/GET `/api/tasks/{id}/proposals`: one proposal per team/task; no readiness threshold. Public details are `null` unless `publishDetails:true`. For the **local demo only**, `?scope=demo-business&businessId=business-demo` exposes the owner's view. This is not authentication or a privacy boundary.
-- PATCH `/api/proposals/{id}/decision`: `{businessId,decision:"selected"|"rejected"}`. Multiple selections are allowed.
-- POST `/api/proposals/{id}/milestones`: `{teamId,description}` for a selected team.
-- POST `/api/milestones/{id}/confirm`: `{businessId}`; one transaction awards 10 experience points and one completed stage, once per milestone.
-- GET `/api/events?after=0&limit=100`: real persisted events, at most 200 per page; the cursor advances only to the last returned event.
+Проверка собранной версии в браузере, конкретного публичного HTTPS-адреса и живого AI выполняется отдельно: этот документ не заявляет, что она завершена.
 
-These endpoints are implemented and can be exercised with `backend/examples/demo.py`; current Unity UI does not yet invoke them. Exact schemas, limits and errors are in `/openapi.json` and [backend documentation](../backend/README.md). All API errors use `{"error":{"code":"...","message":"..."}}`.
+## Каталог и обновления
+
+`GET /api/catalog` возвращает:
+
+```json
+{
+  "version": 1,
+  "cards": [{
+    "id": "task-id", "businessId": "business-demo",
+    "title": "Название", "description": "Потребность", "category": "Образование",
+    "readiness": 40, "clarity": 0, "teamIds": [], "demo": false
+  }],
+  "teams": [{
+    "id": "team-1", "name": "Команда", "initials": "TF", "stack": "Unity · Python",
+    "description": "Описание", "completed": 0, "experience": 0
+  }]
+}
+```
+
+Цикл клиента опрашивает каталог примерно раз в пять секунд, ожидая завершения предыдущего запроса; после действий есть дополнительные обновления. Тайм-аут каталога — 8 секунд, остальных API-запросов — 25 секунд. Ошибка сохраняет последний каталог. Снимок с меньшей `version` не заменяет уже полученный новый.
+
+Проверяются уникальные непустые id, наличие указанных команд, `readiness` 0–100 и конечная `clarity` 0–10. Порядок: `readiness DESC`, затем `clarity DESC`, затем `id ASC`. Эти оценки не складываются.
+
+`demo:true` помечает синтетические задачи. SAT-карточка seed имеет 100 баллов за десять заранее заполненных и подтверждённых полей. Это полнота примера, не оценка сообщения пользователя. Кнопка «Демо» показывает локальную анимацию рейтинга, не публикует данные и при выходе возвращает серверный каталог.
+
+## Чат и ручной черновик
+
+`POST /api/chat` принимает `{conversationId,message}`. Пустой id создаёт разговор; затем используется полученный id. Неизвестный непустой id даёт 404. История хранится сервером; клиент передаёт очередное сообщение.
+
+Ответ содержит `conversationId`, `message`, `phase`, `aiMode`, `questions`, `draft`, `sources`, `missingFields`. Unity показывает сообщение и режим AI, переносит `draft` в редактор и предлагает открыть карточку при `phase:"draft_ready"`. `sources` сохраняются на сервере; отдельного просмотра цитат в UI нет.
+
+Первое краткое описание получает три вопроса. В fallback следующий ответ, включая «не знаю», возвращает редактируемый черновик с пустыми неизвестными полями без повторного опроса. Первый ответ можно дать по номерам `1. …`, `2) …`, `3: …`, если сохранённые вопросы однозначно задают поля. Явные строки `пользователи: …`, `данные: …`, `критерии успеха: …` также заполняют поля. Свободные дополнения без меток в fallback остаются в истории без угадывания назначения.
+
+Личный черновик и список изменённых вручную полей сохраняются в `PlayerPrefs`. Следующий AI-ответ сохраняет ручные значения таких полей, включая намеренно очищенные, и обновляет остальные. Это клиентские приоритеты: сервер чата не получает ручные изменения до публикации/редактирования задачи. Защищённое поле можно снова изменить в редакторе.
+
+При отправке сообщения ввод и сброс заблокированы; ошибка сохраняет текст для повтора. «Сначала» очищает личный черновик, ручные приоритеты и текущий id разговора; старая история остаётся в SQLite. После перезапуска локальный черновик восстанавливается, но переписка и связь личного черновика с опубликованной задачей автоматически не восстанавливаются. Сохранённую задачу откройте через каталог и «Мои задачи».
+
+## Редактор, подтверждение и публикация
+
+12 полей: `title`, `category`, `context`, `need`, `users`, `data`, `constraints`, `expectedResult`, `successCriteria`, `contact`, `interactionFormat`, `feedbackProcess`.
+
+Редактор вызывает `POST /api/tasks/preview` с `{draft,confirmedFields}` после паузы в наборе. В предварительном расчёте имена непустых полей передаются как предполагаемые подтверждения: панель **«После подтверждения»** показывает потенциальный балл. Запрос не публикует задачу и не сохраняет согласие. Сервер исключает заглушки, поэтому «не знаю» баллов не даёт. Ответ: `readiness`, `readinessLevel`, десять строк `scoreBreakdown`, `missingFields`.
+
+Публикация требует название, тему, адрес сервера и отметку **«Подтверждаю сведения»**. Она подтверждает все непустые поля формы; любая правка сбрасывает отметку. API поддерживает подтверждения отдельных полей через `confirmedFields`, но отдельных флажков для каждого поля в UI нет. Низкий балл не запрещает публикацию и отклик.
+
+- `POST /api/tasks`: `{businessId,draft,confirmedFields,confirmed:true,conversationId}`. Сервер переносит подходящие источники разговора; ручной текст не получает несоответствующую цитату.
+- Повтор неизменного запроса использует тот же `Idempotency-Key` в пределах запуска клиента. Другое тело получает новый ключ. Backend возвращает прежний результат повтора без новой задачи; старый ключ с другим телом даёт 409. Ключ не сохраняется между перезапусками.
+- После публикации личный черновик связан с задачей до перезапуска/сброса; следующее сохранение использует `PATCH`.
+- `GET /api/tasks/{id}` загружает полную карточку, расшифровку, версию, команды и число откликов.
+- `PATCH /api/tasks/{id}` отправляет весь новый `draft`, `businessId`, `confirmed:true`, `confirmedFields`, текущую `version`, `reconfirmedFields`. После нового согласия клиент передаёт непустые поля и в повторные подтверждения. Устаревшая версия либо отсутствие требуемого подтверждения дают 409; откройте актуальную задачу из каталога.
+
+## Предложения и этапы
+
+| Метод и путь | Контракт |
+| --- | --- |
+| `POST /api/tasks/{id}/proposals` | `{teamId,idea,plan,timeline,prototypeUrl,publishDetails}`; идея, план, срок и HTTP(S)-ссылка обязательны, один отклик команды на задачу |
+| `GET /api/tasks/{id}/proposals` | `{proposals:[...]}`; статусы, профили и доступные детали |
+| `PATCH /api/proposals/{id}/decision` | `{businessId,decision:"selected"}` либо `"rejected"`; можно выбрать несколько команд |
+| `POST /api/proposals/{id}/milestones` | `{teamId,description}`; описание выполненного этапа от выбранной команды |
+| `GET /api/proposals/{id}/milestones` | `{milestones:[...]}`; этапы для бизнеса и автора отклика, в том числе из другого окна/после перезапуска |
+| `POST /api/milestones/{id}/confirm` | `{businessId}`; однократное начисление `+10 experience`, `+1 completed` |
+
+Представления списка предложений:
+
+- `scope=public` или отсутствие scope: профили и статусы видны, `details:null`, если автор не включил `publishDetails:true`.
+- `scope=demo-business&businessId=business-demo`: полные детали для демонстрационного владельца задачи.
+- `scope=demo-team&teamId=team-1`: свой полный отклик и публичные детали других команд. Чужие закрытые предложения остаются с `details:null`.
+
+У списка этапов нет публичного scope: нужен `scope=demo-business&businessId=...` либо `scope=demo-team&teamId=...`. По умолчанию — `demo-business`; отсутствие обязательного id даёт 422, неизвестный профиль — 404, чужой владелец — 403. Этапы упорядочены по `createdAt`, затем `id`, включая подтверждённые; пустой список — `{"milestones":[]}`.
+
+Открытые списки предложений и этапов обновляются примерно через пять секунд после предыдущего ответа. После действий клиент запрашивает новые данные. Отклик и выбор сами по себе опыта не дают. Повторное подтверждение этапа не начисляет его повторно.
+
+## События, ошибки и состояние проверки
+
+`GET /api/events?after=0&limit=100` реализован на сервере, но текущая Unity-версия его не вызывает: уведомления каталога основаны на изменениях снимков. События сохранены; курсор продвигается до последнего возвращённого, максимум 200 за страницу.
+
+Все ошибки: `{"error":{"code":"...","message":"..."}}`. Интерфейс выводит сообщение без stack trace. Тайм-аут не доказывает, что сервер не сохранил запрос: публикация использует ключ повтора, повторный отклик команды возвращает 409.
+
+Без AI-настроек `GET /health` возвращает `{"status":"ok","service":"questbridge","aiMode":"fallback","demo":true}`. Режим `live` требует серверных `OPENAI_API_KEY` и `AI_MODEL`; ответ чата может перейти в `fallback` при ошибке провайдера.
+
+`backend/examples/demo.py` создаёт записи и проходит серверный сценарий. Его наличие не заменяет проверку интерфейса, браузерной сборки и живого AI; результаты проверки ведутся отдельно в корневом README.
