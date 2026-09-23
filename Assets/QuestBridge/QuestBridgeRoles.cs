@@ -10,6 +10,7 @@ namespace QuestBridge
         {
             DrawRoleHalf(false,()=>SetRole(true));
             DrawRoleHalf(true,()=>ShowRoleChoice(true));
+            Surface(roleOverlay,"Role header",0,.78f,1,.22f,Color.white,false);
             Surface(roleOverlay,"Role divider",.4996f,.11f,.0008f,.65f,Line,false);
             DrawBrand(roleOverlay,.405f,.862f,.19f,.082f);
             Text(roleOverlay,"Выберите вашу роль",.32f,.79f,.36f,.042f,17,false,Muted).alignment=TextAlignmentOptions.Center;
