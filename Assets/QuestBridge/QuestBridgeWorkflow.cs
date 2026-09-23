@@ -193,12 +193,13 @@ namespace QuestBridge
             float top=0;
             for(int i=0;i<DraftFields.Length;i++)
             {
-                string key=DraftFields[i];float height=i<2?154:182;
+                string key=DraftFields[i];float height=i<2?170:198;
                 var row=WorkflowRow(fields,key,top,height-12);top+=height;
                 Text(row,FieldLabels[i],0,.74f,1,.25f,16,true).rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Top,0,28);
                 var field=WorkflowInput(row,DraftValue(editingDraft,key),FieldHints[i],0,0,1,1,i==0?160:i==1?100:2000);draftInputs[key]=field;
-                var fieldRect=(RectTransform)field.transform;fieldRect.offsetMin=new Vector2(0,44);fieldRect.offsetMax=new Vector2(0,-32);
-                var issueLabel=Text(row,"",0,0,1,.23f,14,false,InvalidField);issueLabel.alignment=TextAlignmentOptions.TopLeft;draftIssueLabels[key]=issueLabel;
+                var fieldRect=(RectTransform)field.transform;fieldRect.offsetMin=new Vector2(0,60);fieldRect.offsetMax=new Vector2(0,-32);
+                var issueLabel=Text(row,"",0,0,1,1,14,false,InvalidField);issueLabel.alignment=TextAlignmentOptions.TopLeft;
+                issueLabel.rectTransform.SetInsetAndSizeFromParentEdge(RectTransform.Edge.Bottom,4,50);draftIssueLabels[key]=issueLabel;
                 field.onValueChanged.AddListener(value=>{SetDraftValue(editingDraft,key,value);if(editingPersonal)manualDraftFields.Add(key);DraftChanged();});
             }
             fields.sizeDelta=new Vector2(0,top);
@@ -241,7 +242,9 @@ namespace QuestBridge
             if(compact){editorScoreTable.text=value;return;}
             if(editorReviewNote)editorReviewNote.text="ИИ-ясность — после публикации";
             editorBreakdown.text=value;
-            if(editorScoreContent)editorScoreContent.sizeDelta=new Vector2(0,Mathf.Max(360,editorBreakdown.GetPreferredValues(value,Mathf.Max(180,editorScoreContent.rect.width),Mathf.Infinity).y+24));
+            Canvas.ForceUpdateCanvases();
+            if(editorScoreContent)editorScoreContent.sizeDelta=new Vector2(0,Mathf.Max(editorReviewScroll?editorReviewScroll.viewport.rect.height:0,editorBreakdown.GetPreferredValues(value,Mathf.Max(180,editorScoreContent.rect.width),Mathf.Infinity).y+12));
+            if(editorReviewScroll){editorReviewScroll.StopMovement();editorReviewScroll.verticalNormalizedPosition=1;}
         }
         void ShowPreviewPending()
         {
@@ -303,7 +306,7 @@ namespace QuestBridge
                 foreach(var issue in editorValidation.issues??Array.Empty<ContentIssue>())
                     if(issue!=null)lines.Append(ShortLabel(issue.field)).Append(": ").Append(issue.message).Append("\n\n");
                 if(!scored){lines.Append("Нажмите «Повторить проверку». Публикация доступна после проверки.");SetEditorBreakdown(lines.ToString());return;}
-                foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(row.points>0?"✓ ":"○ ").Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
+                foreach(var row in score.scoreBreakdown??Array.Empty<ScoreRow>())lines.Append(ShortLabel(row.field)).Append("  ").Append(row.points).Append('/').Append(row.maxPoints).Append('\n');
                 lines.Append("\nБаллы показывают полноту описания после подтверждения. Они не доказывают истинность сведений.");SetEditorBreakdown(lines.ToString());
             },error=>
             {
