@@ -52,6 +52,7 @@ ALIASES = {
     "процесс обратной связи": "feedbackProcess",
 }
 LABEL_RE = re.compile(r"(?:^|[\n;])\s*([A-Za-zА-Яа-яЁё ]{1,80}):\s*([^\n;]*)")
+NUMBERED_LINE_RE = re.compile(r"(?:^|[\n;])\s*([1-3])[.):]\s*([^\n;]*)")
 INSTRUCTION_RE = re.compile(
     r"ignore\s+(?:all\s+)?(?:previous|system)|system\s*prompt|"
     r"игнорир\w*\s+(?:все\s+)?(?:инструкц|правил)|"
@@ -169,10 +170,29 @@ def _source_valid(source: FieldSource, users: dict[str, str], value: str) -> boo
                 and not INSTRUCTION_RE.search(source.quote))
 
 
+def _initial_question_fields(history: list[dict]) -> dict[int, str]:
+    """Map answer numbers only when the stored assistant asked known questions."""
+    first_user_seen = False
+    for message in history:
+        if message.get("role") == "user":
+            if first_user_seen:
+                break
+            first_user_seen = True
+        elif first_user_seen and message.get("role") == "assistant":
+            question_fields = {text: field for field, text in QUESTION_TEXT.items()}
+            return {
+                int(match.group(1)): question_fields[match.group(2).strip()]
+                for match in NUMBERED_LINE_RE.finditer(message["content"])
+                if match.group(2).strip() in question_fields
+            }
+    return {}
+
+
 def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> tuple[Draft, list[FieldSource]]:
     """Only copy literal user text; an unknown reply never erases known facts."""
     values = draft.model_dump()
     user_messages = _user_messages(history)
+    initial_questions = _initial_question_fields(history)
     users = {message["id"]: message["content"] for message in user_messages}
     positions = {message["id"]: index for index, message in enumerate(user_messages)}
     provenance = {source.field: source for source in sources
@@ -201,6 +221,13 @@ def _extract(history: list[dict], draft: Draft, sources: list[FieldSource]) -> t
                     assign("context", first_line, message)
                 if not is_filled(values["title"]):
                     assign("title", first_line[:120], message)
+        if index == 1 and not INSTRUCTION_RE.search(content):
+            # A numbered answer refers to the initial questions, not a guessed
+            # field order. Later corrections still use explicit field labels.
+            for match in NUMBERED_LINE_RE.finditer(content):
+                field = initial_questions.get(int(match.group(1)))
+                if field:
+                    assign(field, match.group(2), message)
         for match in labelled:
             field = ALIASES.get(match.group(1).strip().casefold())
             if field and not INSTRUCTION_RE.search(content):
@@ -230,15 +257,13 @@ class FallbackProvider:
             numbered = "\n".join(f"{index}. {question.text}"
                                  for index, question in enumerate(questions, 1))
             answer_format = "\n".join(f"{FIELD_LABELS[field].capitalize()}: …" for field in fields)
-            message = f"{intro}\n\n{numbered}\n\nОтветьте в таком формате:\n{answer_format}"
+            message = f"{intro}\n\n{numbered}\n\nОтветьте по номерам или укажите поля:\n{answer_format}"
             return ChatResponse(conversationId=conversation_id, message=message,
                                 phase="clarifying", aiMode="fallback", questions=questions,
                                 draft=None, sources=sources, missingFields=missing)
-        message = "Описание сохранено в черновике. Задача ещё не опубликована."
+        message = "Сообщение сохранено. Черновик готов, задача ещё не опубликована."
         if missing:
-            next_field = next(field for field in QUESTION_TEXT if field in missing)
-            message += (f"\n\n{QUESTION_TEXT[next_field]}"
-                        f"\nМожно ответить: «{FIELD_LABELS[next_field].capitalize()}: …».")
+            message += " Неизвестные поля оставлены пустыми. Дополнить сведения можно в любой момент."
         else:
             message += " Проверьте данные перед публикацией."
         return ChatResponse(conversationId=conversation_id, message=message,

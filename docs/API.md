@@ -20,6 +20,8 @@ Base URL: `http://127.0.0.1:8000`. Follow [server startup](../backend/README.md)
 
 POST `/api/chat` example: `{"conversationId":"","message":"Учителя долго проверяют пробные SAT"}`. A short initial description gets three questions. Reuse its returned `conversationId` with `{"conversationId":"<returned id>","message":"Не знаю"}` to obtain `phase:"draft_ready"` with empty unknown fields. An unknown nonempty conversation ID returns 404. The server stores conversation history; Unity sends only the next message. Additional response fields include `phase`, `aiMode`, `questions`, `draft`, `sources` and `missingFields`.
 
+Fallback asks questions only on the first incomplete turn. Follow-ups keep `phase:"draft_ready"` and `questions:[]` without repeating missing-field questions in the message. The first follow-up also accepts numbered answers `1. …`, `2) …`, `3: …` when the stored initial assistant questions identify the fields exactly. Later explicit field labels update known values; unstructured additions stay in conversation history without guessed field assignments.
+
 ## Implemented server endpoints for the next Unity slice
 
 - POST `/api/tasks/preview`: deterministic readiness and ten score rows.

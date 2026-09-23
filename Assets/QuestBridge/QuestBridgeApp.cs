@@ -31,7 +31,7 @@ namespace QuestBridge
         readonly List<UnityWebRequest> requests=new();
         readonly Dictionary<string,UnityEngine.UI.Button> filters=new();
         readonly List<ChatBubble> chatBubbles=new();
-        Snapshot snapshot;
+        Snapshot snapshot, lastServerSnapshot, snapshotBeforeDemo;
         TMP_FontAsset font;
         Sprite rounded, circle;
         RectTransform root, content, right, middle, left, chatContent, detailOverlay;
@@ -47,6 +47,12 @@ namespace QuestBridge
         float chatHeight, toastUntil, demoTick, introTime;
         int demoVersion;
         int selectionFrame;
+        int offlineMessages;
+        UnityEngine.InputSystem.Pointer dismissPointer;
+        Vector2 dismissPressPosition;
+        float dismissMaxDistance;
+        bool dismissStartedOutside;
+        string filterBeforeDemo="Все";
         float lastChatWidth;
         const float RowHeight=224;
         sealed class ChatBubble { public RectTransform rect; public TMP_Text label; public bool user; public float top,height; }
@@ -150,14 +156,15 @@ namespace QuestBridge
             assistantMode=Text(left,string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником",.055f,.855f,.65f,.047f,15,false,Muted);
             focusButton=Button(left,"Фокус",.755f,.855f,.19f,.047f,ToggleFocus,Blue);focusButton.GetComponentInChildren<TMP_Text>().fontSize=14;
             Surface(left,"Chat divider",.055f,.831f,.89f,.0015f,Line,false);
-            chatContent=CreateScroll(left,"Conversation",.045f,.291f,.91f,.522f,out chatScroll);
+            chatContent=CreateScroll(left,"Conversation",.045f,.358f,.91f,.455f,out chatScroll);
             AddMessage("Какую проблему бизнеса хотите решить? Опишите её своими словами.",false,false);
-            draftStatus=Text(left,"Личный черновик",.055f,.240f,.89f,.039f,14,false,Muted);
-            var field=Panel(left,"Draft input",.055f,.110f,.89f,.125f);field.GetComponent<UnityEngine.UI.Image>().raycastTarget=true;
+            draftStatus=Text(left,"Личный черновик",.055f,.309f,.89f,.034f,14,false,Muted);
+            var field=Panel(left,"Draft input",.055f,.110f,.89f,.185f);field.GetComponent<UnityEngine.UI.Image>().raycastTarget=true;
             input=field.gameObject.AddComponent<TMP_InputField>();input.lineType=TMP_InputField.LineType.MultiLineNewline;input.characterLimit=3000;
             var textArea=Rect(field,"Text viewport",0,0,1,1);textArea.offsetMin=new Vector2(16,12);textArea.offsetMax=new Vector2(-16,-12);textArea.gameObject.AddComponent<UnityEngine.UI.RectMask2D>();
             var typed=Text(textArea,"",0,0,1,1,18);typed.verticalAlignment=VerticalAlignmentOptions.Top;input.textViewport=textArea;input.textComponent=(TextMeshProUGUI)typed;
             var placeholder=Text(textArea,"Напишите сообщение…",0,0,1,1,18,false,Muted);placeholder.verticalAlignment=VerticalAlignmentOptions.Top;input.placeholder=placeholder;
+            QuestBridgeComposer.Configure(input,typed,placeholder,textArea);
             sendButton=Button(left,"Отправить",.055f,.035f,.89f,.059f,()=>{if(!sending)StartCoroutine(Chat());},null,true);
 
             Text(middle,"Каталог задач",0,.916f,.75f,.071f,32,true);
@@ -165,7 +172,7 @@ namespace QuestBridge
             filters["Все"]=Button(middle,"Все",0,.779f,.145f,.057f,()=>SetFilter("Все"),Ink,true);
             filters["Образование"]=Button(middle,"Образование",.164f,.779f,.31f,.057f,()=>SetFilter("Образование"),Color.white);
             filters["Бизнес"]=Button(middle,"Бизнес",.491f,.779f,.205f,.057f,()=>SetFilter("Бизнес"),Color.white);
-            demoButton=Button(middle,"Демо",.785f,.779f,.215f,.057f,()=>{demoLive=!demoLive;demoTick=Time.unscaledTime+5;SetButtonText(demoButton,demoLive?"Пауза":"Демо");if(demoLive)DemoLeader();else connectionText.text="Офлайн-демо";},Blue);demoButton.gameObject.SetActive(string.IsNullOrWhiteSpace(serverUrl));
+            demoButton=Button(middle,"Демо",.785f,.779f,.215f,.057f,ToggleDemo,Blue);
             content=CreateScroll(middle,"Task list",-.007f,.014f,1.014f,.739f,out catalogScroll);
             // Events have a single temporary toast instead of permanent helper copy.
             var toast=Surface(root,"Event toast",.35f,.820f,.37f,.065f,Ink);toastGroup=toast.gameObject.AddComponent<CanvasGroup>();toastGroup.alpha=0;toastGroup.blocksRaycasts=false;
@@ -179,7 +186,7 @@ namespace QuestBridge
         }
         void ResetConversation()
         {
-            if(sending)return;conversationId="";pendingMessage="";chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;input.text="";
+            if(sending)return;conversationId="";pendingMessage="";offlineMessages=0;chatBubbles.Clear();Clear(chatContent);chatHeight=0;lastChatWidth=0;input.text="";
             draftStatus.text="Личный черновик";assistantMode.text=string.IsNullOrWhiteSpace(serverUrl)?"Без ИИ · пошаговый режим":"Чат с помощником";
             AddMessage("Какую проблему бизнеса хотите решить? Опишите её своими словами.",false,false);
         }
@@ -207,7 +214,7 @@ namespace QuestBridge
                 v.rect.anchoredPosition=Vector2.Lerp(v.rect.anchoredPosition,new Vector2(0,v.targetY),1-Mathf.Exp(-8*dt));v.displayedScore=Mathf.MoveTowards(v.displayedScore,v.data.readiness,100*dt);v.score.text=Mathf.RoundToInt(v.displayedScore)+"%";v.bar.anchorMax=new Vector2(Mathf.Clamp01(v.displayedScore/100f),1);
                 v.highlight=Mathf.Max(0,v.highlight-dt*.55f);v.group.alpha=Mathf.MoveTowards(v.group.alpha,1,dt*3.5f);v.strip.color=v.highlight>0&&!focus?new Color(Accent.r,Accent.g,Accent.b,v.highlight):Color.clear;
             }
-            if(demoLive&&Time.unscaledTime>=demoTick&&!focus&&string.IsNullOrWhiteSpace(serverUrl)){demoTick=Time.unscaledTime+5;DemoLeader();}
+            if(demoLive&&Time.unscaledTime>=demoTick&&!focus){demoTick=Time.unscaledTime+5;DemoLeader();}
         }
         void LateUpdate()
         {
@@ -219,10 +226,24 @@ namespace QuestBridge
                 return;
             }
             var pointer=UnityEngine.InputSystem.Pointer.current;
-            if(selectedTeamId!=null&&!detailOverlay&&!focus&&Time.frameCount!=selectionFrame&&pointer!=null&&pointer.press.wasPressedThisFrame)
+            var canvas=root.GetComponent<Canvas>();var cam=canvas.renderMode==RenderMode.ScreenSpaceOverlay?null:canvas.worldCamera;
+            if(dismissPointer!=null&&(!dismissPointer.added||pointer!=dismissPointer))dismissPointer=null;
+            if(pointer!=null&&pointer.press.wasPressedThisFrame)
             {
-                var canvas=root.GetComponent<Canvas>();var cam=canvas.renderMode==RenderMode.ScreenSpaceOverlay?null:canvas.worldCamera;
-                if(!RectTransformUtility.RectangleContainsScreenPoint(right,pointer.position.ReadValue(),cam))ShowTeam(null,null,false);
+                dismissPointer=pointer;dismissPressPosition=pointer.position.ReadValue();dismissMaxDistance=0;
+                dismissStartedOutside=selectedTeamId!=null&&!detailOverlay&&!focus&&!RectTransformUtility.RectangleContainsScreenPoint(right,dismissPressPosition,cam);
+            }
+            if(dismissPointer!=null)
+            {
+                var position=dismissPointer.position.ReadValue();dismissMaxDistance=Mathf.Max(dismissMaxDistance,(position-dismissPressPosition).sqrMagnitude);
+                var touch=UnityEngine.InputSystem.Touchscreen.current;
+                if(touch!=null&&touch.touches.Count(t=>t.press.isPressed)>1)dismissStartedOutside=false;
+                if(dismissPointer.press.wasReleasedThisFrame)
+                {
+                    float threshold=EventSystem.current?EventSystem.current.pixelDragThreshold:10;
+                    if(dismissStartedOutside&&dismissMaxDistance<threshold*threshold&&selectedTeamId!=null&&!detailOverlay&&!focus&&Time.frameCount!=selectionFrame&&!RectTransformUtility.RectangleContainsScreenPoint(right,position,cam))ShowTeam(null,null,false);
+                    dismissPointer=null;
+                }
             }
         }
         static bool IsExample(Card card)=>card.demo||(card.title??"").StartsWith("ДЕМО:",StringComparison.OrdinalIgnoreCase);
@@ -287,7 +308,13 @@ namespace QuestBridge
             int index=0;foreach(var card in snapshot.cards){var v=cards[card.id];bool visible=filter=="Все"||card.category==filter;v.rect.gameObject.SetActive(visible);if(!visible)continue;v.targetY=-index++*RowHeight;if(immediate)v.rect.anchoredPosition=new Vector2(0,v.targetY);}
             content.sizeDelta=new Vector2(0,index*RowHeight);var pos=content.anchoredPosition;pos.y=Mathf.Clamp(pos.y,0,Mathf.Max(0,content.rect.height-catalogScroll.viewport.rect.height));content.anchoredPosition=pos;countText.text=index+(snapshot.cards.All(IsExample)?" примеров":" задач")+"  ·  По полноте описания";
         }
-        void SelectTeam(string teamId,string cardId){var team=snapshot.teams.FirstOrDefault(t=>t.id==teamId);var card=snapshot.cards.FirstOrDefault(c=>c.id==cardId);if(team!=null)ShowTeam(team,card,true);}
+        void SelectTeam(string teamId,string cardId)
+        {
+            var team=snapshot.teams.FirstOrDefault(t=>t.id==teamId);var card=snapshot.cards.FirstOrDefault(c=>c.id==cardId);
+            if(team==null||card==null)return;selectionFrame=Time.frameCount;
+            if(selectedTeamId==teamId&&selectedCardId==cardId)return;
+            ShowTeam(team,card,true);
+        }
         static void Clear(Transform p){foreach(Transform child in p){child.gameObject.SetActive(false);Destroy(child.gameObject);}}
         void ShowTeam(Team team,Card card,bool animate)
         {
@@ -372,18 +399,24 @@ namespace QuestBridge
             while(true)
             {
                 float nextPoll=Time.unscaledTime+Mathf.Max(5,pollSeconds);
+                if(demoLive){yield return new WaitForSecondsRealtime(.5f);continue;}
                 if(!string.IsNullOrWhiteSpace(serverUrl))
                 {
-                    demoLive=false;demoButton.gameObject.SetActive(false);if(!ValidBaseUrl()){connectionText.text="Проверьте адрес сервера";yield return new WaitForSecondsRealtime(5);continue;}
+                    if(!ValidBaseUrl()){connectionText.text="Проверьте адрес сервера";yield return new WaitForSecondsRealtime(5);continue;}
                     using(var req=UnityWebRequest.Get(serverUrl.TrimEnd('/')+"/api/catalog"))
                     {
                         requests.Add(req);req.timeout=8;yield return req.SendWebRequest();requests.Remove(req);
                         if(req.result==UnityWebRequest.Result.Success)
                         {
-                            try{Apply(JsonUtility.FromJson<Snapshot>(req.downloadHandler.text),onlineSnapshot);onlineSnapshot=true;connectionText.text="Сервер подключён";}
-                            catch(ArgumentException){connectionText.text=onlineSnapshot?"Ошибка данных":"Показаны примеры";}
+                            try
+                            {
+                                var next=JsonUtility.FromJson<Snapshot>(req.downloadHandler.text);Validate(next);lastServerSnapshot=next;
+                                if(!demoLive){Apply(next,onlineSnapshot);connectionText.text="Сервер подключён";}
+                                onlineSnapshot=true;
+                            }
+                            catch(ArgumentException){if(!demoLive)connectionText.text=onlineSnapshot?"Ошибка данных":"Показаны примеры";}
                         }
-                        else connectionText.text=onlineSnapshot?"Нет связи":"Офлайн-демо";
+                        else if(!demoLive)connectionText.text=onlineSnapshot?"Нет связи":"Офлайн-демо";
                     }
                 }
                 yield return new WaitForSecondsRealtime(Mathf.Max(.1f,nextPoll-Time.unscaledTime));
@@ -396,7 +429,9 @@ namespace QuestBridge
             if(pendingMessage!=message)AddMessage(message,true);pendingMessage=message;bool success=false;
             if(string.IsNullOrWhiteSpace(serverUrl))
             {
-                yield return new WaitForSecondsRealtime(.55f);AddMessage("Чтобы уточнить задачу, расскажите:\n\n1. Кто будет пользоваться решением?\n2. Какие данные у вас уже есть?\n3. Какой результат вы хотите получить?",false);assistantMode.text="Без ИИ · пошаговый режим";success=true;
+                yield return new WaitForSecondsRealtime(.55f);offlineMessages++;
+                AddMessage(offlineMessages==1?"Чтобы уточнить задачу, расскажите:\n\n1. Кто будет пользоваться решением?\n2. Какие данные у вас уже есть?\n3. Какой результат вы хотите получить?":"Сообщение сохранено в этой беседе. Уточнения завершены; неизвестные детали можно добавить позже.",false);
+                assistantMode.text="Без ИИ · пошаговый режим";draftStatus.text=offlineMessages==1?"Уточняем задачу":"Черновик в этой беседе";success=true;
             }
             else
             {
@@ -413,7 +448,21 @@ namespace QuestBridge
             }
             if(success){input.text="";pendingMessage="";}input.interactable=true;sending=false;sendButton.interactable=true;newChatButton.interactable=true;SetButtonText(sendButton,"Отправить");if(success)Play(riseClip);
         }
-        void DemoLeader(){if(!string.IsNullOrWhiteSpace(serverUrl))return;var next=Demo();demoVersion++;next.cards[demoVersion%next.cards.Length].readiness=99;Apply(next,true);connectionText.text="Демо-события";}
+        void ToggleDemo()
+        {
+            CloseDetails();ShowTeam(null,null,false);
+            if(!demoLive)
+            {
+                snapshotBeforeDemo=snapshot;filterBeforeDemo=filter;demoLive=true;demoTick=Time.unscaledTime+5;
+                SetButtonText(demoButton,"Выйти");Apply(Demo(),false);SetFilter("Все");DemoLeader();
+            }
+            else
+            {
+                demoLive=false;SetButtonText(demoButton,"Демо");Apply(lastServerSnapshot??snapshotBeforeDemo??Demo(),false);SetFilter(filterBeforeDemo);
+                connectionText.text=string.IsNullOrWhiteSpace(serverUrl)?"Офлайн-демо":onlineSnapshot?"Сервер подключён":"Подключение…";
+            }
+        }
+        void DemoLeader(){var next=Demo();demoVersion++;next.cards[demoVersion%next.cards.Length].readiness=99;Apply(next,true);connectionText.text="Демо-каталог";}
         void Play(AudioClip clip){if(sound&&!focus&&clip)audioSource.PlayOneShot(clip);}
         void OnDestroy()
         {
